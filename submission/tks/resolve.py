@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from .extract import (AUTHORITY, Row, canon_url, clean_inline, hours_blocks, model_years, page_kind,
-                      parse_tables, passages, published_date, terms, tier_range)
+                      parse_tables, passages, prose_facts, published_date, terms, tier_range)
 from .query import Query, parse
 from .search import BM25, tokens
 
@@ -21,9 +21,14 @@ REFUSAL = ("I don't know. That isn't listed on Dupaco's website, so I can't conf
 METRIC_NAME = {"apy": "APY", "apr": "APR", "dividend": "dividend rate", "rate": "rate"}
 PASSAGE_WEIGHT = {"rate_sheet": 1.0, "product": 1.0, "guide": 0.8, "promo": 0.7, "news": 0.65, "file": 0.55,
                   "blog": 0.5, "calculator": 0.3, "legal": 0.3, "listing": 0.0}
-ALLOWED_HOST = "dupaco.com"
+
+def _site(netloc: str) -> str:
+    """Registrable-ish host: 'www.dupaco.com' and 'dupaco.com' are the same site."""
+    host = netloc.lower().split("@")[-1].split(":")[0]
+    return host[4:] if host.startswith("www.") else host
+
 RATE_STATEMENT = re.compile(r"\d+\.\d+\s?%\s*(?:\(?(?:apr|apy)\)?|annual percentage|dividend|interest|fixed|"
-                            r"variable)", re.I)
+                            r"variable)|\b(?:apr|apy|rate)\s*:\s*\d+\.\d+\s?%", re.I)
 ADDRESS = re.compile(r"^\s*\d{2,6}\s+[A-Z0-9][^,\n]{2,60},\s*[A-Za-z .]+,\s*[A-Z]{2},?\s*\d{5}\b.*$", re.M)
 
 
@@ -134,21 +139,23 @@ class Knowledge:
         self.pass_docs: list[list[int]] = []
         self._pass_ids: dict[tuple[str, str, str], int] = {}
         self._fact_idf: dict[str, float] | None = None
+        self.site: str | None = None
 
     # ------------------------------------------------------------------ ingest
     def ingest(self, snapshot) -> None:
         sid, taken = str(snapshot.snapshot_id), str(snapshot.taken_on)[:10]
         # OWASP AST04 (Insecure Metadata): manifest fields are untrusted input. Validate the date shape and
-        # only keep pages on the credit union's own host, so a poisoned manifest cannot inject foreign
-        # citations; nothing is deserialized beyond the plain strings the harness hands us.
+        # only keep pages on the crawled site's own host (learned from the first snapshot), so a poisoned
+        # manifest cannot inject foreign citations; nothing is deserialized beyond plain strings.
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", taken):
             raise ValueError(f"bad taken_on for {sid!r}")
+        if self.site is None:
+            hosts = Counter(_site(urlsplit(str(p.url or "")).netloc) for p in snapshot.pages)
+            self.site = hosts.most_common(1)[0][0] if hosts else ""
         view: dict[str, int] = {}
         for p in snapshot.pages:
             url, md = str(p.url or ""), str(p.markdown or "")
-            host = urlsplit(url).netloc.lower()
-            if urlsplit(url).scheme not in ("http", "https") or not (host == ALLOWED_HOST or
-                                                                    host.endswith("." + ALLOWED_HOST)):
+            if urlsplit(url).scheme not in ("http", "https") or _site(urlsplit(url).netloc) != self.site:
                 continue
             canon = canon_url(url)
             if canon in view:
@@ -160,6 +167,14 @@ class Knowledge:
                 self._doc_ids[key] = did
             view[canon] = did
             self.fetched[(sid, did)] = str(p.fetched_at or taken)
+        # A page missing from a later crawl was not re-fetched, not deleted: carry its newest earlier
+        # version forward (it keeps its old fetched_at, so fresher pages still outrank it).
+        if self.snaps:
+            prev_sid = self.snaps[-1][0]
+            for canon, did in self.views[prev_sid].items():
+                if canon not in view:
+                    view[canon] = did
+                    self.fetched[(sid, did)] = self.fetched[(prev_sid, did)]
         self.views[sid] = view
         self.snaps = sorted(set(self.snaps) | {(sid, taken)}, key=lambda s: (s[1], s[0]))
         self._fact_idf = None
@@ -169,7 +184,10 @@ class Knowledge:
         did = len(self.docs)
         self.docs.append(Doc(url, canon, title, kind, AUTHORITY[kind], published_date(md), md))
         path = urlsplit(canon).path
-        for row in parse_tables(md):
+        rows = parse_tables(md)
+        if kind in ("rate_sheet", "product", "guide"):
+            rows += prose_facts(md)     # stale narrative pages (blog, news, promo) never feed the rate engine
+        for row in rows:
             low = row.text.lower()
             flags = set()
             if "jumbo" in low:
@@ -449,8 +467,8 @@ class Knowledge:
                 continue
             if re.sub(r"\s*\(https?://[^)]*\)\s*$", "", text).rstrip().endswith("?"):
                 continue          # an FAQ question line is not an answer
-            if len(re.sub(r"\([^)]*https?://[^)]*\)", " ", text).split()) < 8:
-                continue          # navigation fragments ("Continue Cancel Keep reading") carry no answer
+            if "http" in text and len(re.sub(r"\([^)]*https?://[^)]*\)", " ", text).split()) < 8:
+                continue          # link-only navigation ("Continue Cancel Keep reading (url)") carries no answer
             if self._coverage(q, pid, did) < 0.4:
                 continue
             if picked and (score < 0.6 * picked[0][0] or any(text == t for _, _, _, t in picked)):

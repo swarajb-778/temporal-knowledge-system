@@ -2,7 +2,7 @@ import unittest
 
 from tests import fixtures  # noqa: F401  (puts submission/ on sys.path)
 from tks.extract import (canon_url, clean_inline, hours_blocks, model_years, page_kind, parse_tables,
-                         passages, published_date, terms, tier_range)
+                         passages, prose_facts, published_date, terms, tier_range)
 
 RATES_MD = """# Rates
 
@@ -100,6 +100,11 @@ class TestHoursPassagesDates(unittest.TestCase):
     def test_passages_carry_heading_and_skip_images(self):
         ps = passages("## Join\n\n![img](https://x/y.png)\n\nApply at [join](https://join.dupaco.com/).\n")
         self.assertEqual(ps, [("Join", "Apply at join (https://join.dupaco.com/).")])
+
+    def test_prose_rate_lines_become_facts(self):
+        (row,) = prose_facts("# Certificates\n\n6-month certificate APY: 3.50%\n\nCall us for details.\n")
+        self.assertEqual((row.caption, row.labels, row.values), ("Certificates", ["6-month certificate"],
+                                                                 [("apy", "3.50%")]))
 
     def test_published_date(self):
         self.assertEqual(published_date("2 min read\n\nMarch 02, 2026\n\nBody"), "2026-03-02")

@@ -31,7 +31,7 @@ def canon_url(url: str) -> str:
 
 def page_kind(url: str) -> str:
     path = urlsplit(url).path.lower().rstrip("/") or "/"
-    if path in ("/rates", "/business-rates"):
+    if path in ("/rates", "/business-rates") or path.startswith("/rates/"):
         return "rate_sheet"
     if path.startswith("/hubfs") or path.endswith((".pdf", ".xls", ".xlsx")):
         return "file"
@@ -221,6 +221,31 @@ def parse_tables(md: str) -> list[Row]:
                 rows.append(Row(caption, labels, lheads, values, effective, line.strip(), t, text))
         t += 1
         i = j
+    return rows
+
+
+PROSE_RATE = re.compile(r"^(?P<label>[A-Za-z0-9][^:%|]{2,60}?)\s*:\s*(?P<val>\d+(?:\.\d+)?%(?:\s*[–-]\s*\d+(?:\.\d+)?%)?)"
+                        r"\s*(?P<metric>APY|APR)?\.?$", re.I)
+
+
+def prose_facts(md: str) -> list[Row]:
+    """Short 'label: N% APY' statements outside tables, e.g. '6-month certificate APY: 3.50%'."""
+    rows, heading = [], ""
+    for i, raw in enumerate(md.splitlines()):
+        if raw.lstrip().startswith("#"):
+            heading = clean_inline(raw.lstrip("# ").strip())
+            continue
+        s = clean_inline(raw.strip().lstrip("-* ").strip())
+        s = re.sub(r"\s*\(https?://[^)]*\)", "", s)
+        s = re.sub(r"(?<=APR|APY)\s*\d\b", "", s).strip()
+        m = PROSE_RATE.match(s)
+        if not m:
+            continue
+        label, low = m.group("label").strip(), s.lower()
+        metric = ("apy" if "apy" in low else "apr" if "apr" in low else "dividend" if "dividend" in low
+                  else "rate")
+        text = f"{heading} {label}"
+        rows.append(Row(heading, [label], [], [(metric, m.group("val").replace(" ", ""))], None, s, 1000 + i, text))
     return rows
 
 
