@@ -67,6 +67,8 @@ def tokens(text: str, keep_stop: bool = False) -> list[str]:
 
 class BM25:
     """Inverted index; documents are opaque integer ids added in order."""
+    # ponytail: lexical BM25, no embeddings. Ceiling: rewordings with no shared words miss; upgrade path is a
+    # local embedding re-ranker over the top 50, at the cost of a dependency and strict determinism.
 
     def __init__(self, k1: float = 1.2, b: float = 0.5):
         self.k1, self.b = k1, b

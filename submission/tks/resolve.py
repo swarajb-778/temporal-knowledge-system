@@ -530,6 +530,8 @@ class Knowledge:
         others = [t for t in q.toks if t != word]
         votes: Counter = Counter()
         example: dict[str, tuple[int, str]] = {}
+        # ponytail: scans every matching sentence in the snapshot (~10 ms here); index count claims at ingest
+        # if the corpus grows by orders of magnitude.
         probe = Query(text=q.text, as_of=q.as_of, toks=[word] + others, ptoks=[])
         ref = self.snaps[-1][1] if q.as_of is None else str(q.as_of)[:10]
         voted, newest = set(), {}

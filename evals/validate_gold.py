@@ -41,7 +41,7 @@ def main() -> int:
     all_text = "\n".join(_norm(t) for t in unique)
 
     def anywhere(v: str) -> bool:
-        if contains("", v) is False and _numbers(v) and len(v) <= 20:
+        if _numbers(v) and len(v) <= 20:
             return _numbers(v) <= all_numbers or any(n[1] in {a[1] for a in all_numbers} for n in _numbers(v))
         return _norm(v) in all_text
     hard, warn, checked = [], [], 0
