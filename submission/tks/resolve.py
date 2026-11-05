@@ -199,12 +199,16 @@ class Knowledge:
             hosts = Counter(_site(urlsplit(str(p.url or "")).netloc) for p in snapshot.pages)
             self.site = hosts.most_common(1)[0][0] if hosts else ""
         view: dict[str, int] = {}
+        fetched_at: dict[str, str] = {}
         for p in snapshot.pages:
             url, md = str(p.url or ""), str(p.markdown or "")
             if urlsplit(url).scheme not in ("http", "https") or _site(urlsplit(url).netloc) != self.site:
                 continue
             canon = canon_url(url)
-            if canon in view:
+            when = str(p.fetched_at or taken)
+            if canon in view and when <= fetched_at[canon]:
+                # The same URL can appear twice (a fragment-only copy, e.g. /retirement#iracompare).
+                # Keep the one fetched later; a stale copy must not shadow the fresh page.
                 continue
             key = (canon, hashlib.sha256(md.encode("utf-8", "replace")).hexdigest())
             did = self._doc_ids.get(key)
@@ -212,7 +216,8 @@ class Knowledge:
                 did = self._add_doc(url, canon, str(p.title or ""), md)
                 self._doc_ids[key] = did
             view[canon] = did
-            self.fetched[(sid, did)] = str(p.fetched_at or taken)
+            fetched_at[canon] = when
+            self.fetched[(sid, did)] = when
         # A page missing from a later crawl was not re-fetched, not deleted: carry its newest earlier
         # version forward (it keeps its old fetched_at, so fresher pages still outrank it).
         if self.snaps:
