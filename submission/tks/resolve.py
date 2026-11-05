@@ -37,6 +37,7 @@ def _site(netloc: str) -> str:
 
 RATE_STATEMENT = re.compile(r"\d+\.\d+\s?%\s*(?:\(?(?:apr|apy)\)?|annual percentage|dividend|interest|fixed|"
                             r"variable)|\b(?:apr|apy|rate)\s*:\s*\d+\.\d+\s?%", re.I)
+ORDINAL_WORDS = r"\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b"  # "the fifth time"
 ANSWER_TYPES = {
     "money": re.compile(r"\$\s?\d"),
     "phone": re.compile(r"\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b"),
@@ -549,12 +550,17 @@ class Knowledge:
         live = set(view.values())
         hits = self.bm25.search(q.toks, allowed=lambda pid: any(d in live for d in self.pass_docs[pid]), k=k * 3)
         qt = set(q.toks)
+        ref_year = int((q.as_of or self.snaps[-1][1])[:4])
         out = []
         for score, pid in hits:
             did = max((d for d in self.pass_docs[pid] if d in live), key=lambda d: (self.docs[d].auth, -d))
             doc = self.docs[did]
             tfrac = len(qt & set(tokens(doc.title))) / (len(qt) or 1)
-            out.append((score * PASSAGE_WEIGHT[doc.kind] * (1 + 0.5 * tfrac), pid, did))
+            w = PASSAGE_WEIGHT[doc.kind] * (1 + 0.5 * tfrac)
+            if doc.kind in ("news", "blog") and doc.published:
+                # Recency prior for dated narrative: a 2026 release is likelier to be current than a 2021 one.
+                w *= 0.85 + 0.3 * max(0.0, 1 - (ref_year - int(doc.published[:4])) / 3)
+            out.append((score * w, pid, did))
         out.sort(key=lambda x: (-x[0], x[1]))
         return out[:k]
 
@@ -673,7 +679,8 @@ class Knowledge:
                 st = tokens(s)
                 if word not in st or (others and len(set(others) & set(st)) < max(1, len(others) // 2)):
                     continue
-                for m in re.finditer(r"(\d[\d,]*)\+?\s+((?:[\w-]+\s+){0,2}?)([A-Za-z-]+)", s):
+                for m in re.finditer(r"(\d[\d,]*|" + ORDINAL_WORDS + r")\+?\s+((?:[\w-]+\s+){0,2}?)([A-Za-z-]+)", s,
+                                     re.I):
                     if tokens(m.group(3)) == [word] or (tokens(m.group(3)) and tokens(m.group(3))[0] == word):
                         n = m.group(1)
                         if (did, n) in voted:

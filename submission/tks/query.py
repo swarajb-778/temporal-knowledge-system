@@ -234,9 +234,10 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
     elif re.search(r"\baddress\b|\bwhere is\b|\bwhere's\b|\bwhere are\b|\blocated\b|\bdirections\b",
                    low) and q.terms == set():
         q.intent = "address"
-    elif re.search(r"\bhow many\b", low):
+    elif re.search(r"\bhow many\b|\b(total )?number of\b(?! (the )?(routing|phone|account))", low):
         q.intent = "count"
-        after = tokens(low.split("how many", 1)[1])
+        tail = re.split(r"\bhow many\b|\bnumber of\b", low, maxsplit=1)[1]
+        after = [t for t in tokens(tail) if t not in ("dupaco", "total")]
         q.count_word = after[0] if after else None
     elif RATE_INTENT.search(low) or (re.search(r"\b(pay|pays|earn|earns)\b", low)
                                      and not re.search(r"\b(fee|fees|cost|charge|bill|loan payment)\b", low)):

@@ -290,16 +290,20 @@ def hours_blocks(md: str) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
 
 
 def passages(md: str, max_len: int = 700) -> list[tuple[str, str]]:
-    out, heading, asked = [], "", None
+    out, heading, asked, prev_was_heading = [], "", None, False
     for block in re.split(r"\n\s*\n", md):
         block = block.strip()
         if not block or block.startswith("|"):
             continue
         if block.startswith("#") and "\n" not in block:
-            heading = clean_inline(block.lstrip("#").strip())
-            if heading.endswith("?"):
+            h = clean_inline(block.lstrip("#").strip())
+            # Stacked headings ("WHO CAN JOIN" over "You're Eligible to Join...") both describe the text below.
+            heading = f"{heading} / {h}" if prev_was_heading and heading else h
+            prev_was_heading = True
+            if h.endswith("?"):
                 asked = heading
             continue
+        prev_was_heading = False
         text = clean_inline(block)
         if len(re.findall(r"[A-Za-z0-9]", text)) < 3:
             continue
