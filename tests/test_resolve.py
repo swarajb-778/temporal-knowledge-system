@@ -101,12 +101,11 @@ class TestIngestValidation(unittest.TestCase):
         self.assertFalse(any("evil" in d.url for d in ks.docs))
 
     def test_fresher_copy_wins_when_a_url_appears_twice(self):
+        from contract import Snapshot
         ks = solution.build()
-        snap = fixtures.snapshots()[0]
+        fresh = fixtures.snapshots()[0]
         stale = fixtures.page("/rates", fixtures.cert_table("1.00%", "1.00%", "01/01/2026"), fetched="2026-01-01")
-        fresh = snap.pages[0]
-        snap.pages = [stale, fresh]      # the stale copy comes first in the manifest
-        ks.ingest(snap)
+        ks.ingest(Snapshot(fresh.snapshot_id, fresh.taken_on, [stale, fresh.pages[0]]))   # stale copy first
         text = ks.answer("What is the APY on the 10-month jumbo certificate special?").text
         self.assertIn("3.90%", text)
         self.assertNotIn("1.00%", text)
