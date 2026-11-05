@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from .extract import (AUTHORITY, Row, canon_url, clean_inline, hours_blocks, model_years, page_kind,
                       parse_tables, passages, prose_facts, published_date, terms, tier_range)
-from .query import Query, parse
+from .query import BAD_DATE, Query, parse
 from .search import BM25, STOP, normalize, tokens
 
 # OWASP AST05 (Untrusted External Instructions): page text is attacker-controllable data. Nothing in it is
@@ -37,7 +37,10 @@ def _site(netloc: str) -> str:
 
 RATE_STATEMENT = re.compile(r"\d+\.\d+\s?%\s*(?:\(?(?:apr|apy)\)?|annual percentage|dividend|interest|fixed|"
                             r"variable)|\b(?:apr|apy|rate)\s*:\s*\d+\.\d+\s?%", re.I)
+VARIANT_WORDS = frozenset({"jumbo", "refinance", "refinanc", "business", "ira", "roth", "traditional", "intro",
+                           "introductory", "fixed", "variable", "special", "regular"})
 ORDINAL_WORDS = r"\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b"  # "the fifth time"
+PO_BOX = re.compile(r"P\.?\s?O\.?\s?Box\s+\d+,?\s+[A-Za-z .]{2,30},?\s+[A-Z]{2}\s+\d{5}(?:[-\u2011]\d{4})?")
 ANSWER_TYPES = {
     "money": re.compile(r"\$\s?\d"),
     "phone": re.compile(r"\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b"),
@@ -230,6 +233,8 @@ class Knowledge:
             if "business" in low or path.startswith("/business"):
                 flags.add("business")
             tags = " mortgage" if re.search(r"conventional|home loans", low) else ""
+            if "ira" in flags and terms(row.text):
+                tags += " certificate"      # a term IRA is an IRA certificate even if its table never says so
             labels = " ".join(row.labels)
             fact = Fact(did, row, frozenset(tokens(row.text + tags)), frozenset(flags), frozenset(terms(row.text)),
                         model_years(labels), tier_range(labels))
@@ -345,6 +350,10 @@ class Knowledge:
                       today=self.snaps[-1][1])
             if q.future:
                 return self._refuse("asks for a value after the newest crawl; the site does not forecast")
+            if q.as_of == BAD_DATE:
+                return self._refuse("as_of could not be read as a date")
+            if q.off_topic and q.intent != "rate":
+                return self._refuse("outside what a credit union website covers")
             sid = self._snapshot_for(q.as_of)
             view = self.views[sid]
             # Before the first crawl nothing was observed: only a rate whose stated effective date is on or
@@ -353,7 +362,16 @@ class Knowledge:
             if not_after:
                 return self._rate(q, sid, view, not_after) or self._refuse("date precedes the first crawl")
             if q.intent == "hours":
-                return self._hours(q, sid, view)
+                hours = self._hours(q, sid, view)
+                if q.branch and re.search(r"\baddress|\bwhere\b|\blocated\b", q.text, re.I):
+                    addr = self._address(q, sid, view)     # "hours and address of the Galena branch"
+                    if addr and not hours.confident:
+                        addr.text += " Its lobby hours are not listed on the website."
+                        return addr
+                    if addr:
+                        hours.text = f"{addr.text} {hours.text}"
+                        hours.sources = addr.sources + hours.sources
+                return hours
             if q.intent == "count":
                 got = self._count(q, sid, view)
                 if got:
@@ -362,6 +380,8 @@ class Knowledge:
                 got = self._address(q, sid, view)
                 if got:
                     return got
+                if q.branch:       # a named branch with no address on the site: never guess from prose
+                    return self._refuse(f"no address published for {q.branch}")
             if q.intent in ("rate", "url"):
                 got = self._rate(q, sid, view)
                 if got:
@@ -379,14 +399,16 @@ class Knowledge:
             return self._refuse(f"internal error ({type(e).__name__})")   # no internals in the answer
 
     def _row_ok(self, q: Query, f: Fact) -> bool:
-        if q.terms and not (q.terms & f.terms):
-            return False
+        """Product identity only (segment and variant flags). Term, model year and amount are applied after
+        the product is chosen (_qualify), so a $9,000 RV question cannot drift onto ATV rows."""
         asked = set(q.flags)
         if asked & {"roth", "traditional"}:
             asked.add("ira")
+        big = max(q.amounts, default=0.0)
         for flag in ("jumbo", "ira", "refinance", "intro"):
-            if flag == "jumbo" and q.superlative == "max" and "jumbo" in f.flags:
-                continue      # "which special pays the most" must consider the jumbo tier too
+            if flag == "jumbo" and "jumbo" in f.flags and (
+                    q.superlative == "max" or (f.row.min_earn and big >= f.row.min_earn)):
+                continue      # "pays the most" or a deposit above the jumbo minimum: the jumbo row applies
             if (flag in asked) != (flag in f.flags):
                 return False
         for flag in ("roth", "traditional"):
@@ -396,24 +418,53 @@ class Knowledge:
             return False
         if "business" in f.flags and "business" not in asked and not q.listing:
             return False
-        if q.years and f.years and not any(f.years[0] <= y <= f.years[1] for y in q.years):
-            return False
-        if q.amounts and f.tier and not all(f.tier[0] <= a <= f.tier[1] for a in q.amounts):
-            return False
         return True
 
+    @staticmethod
+    def _qualify(q: Query, fs: list[Fact]) -> list[Fact]:
+        """Keep the rows of one product that fit the asked term, model year and amount(s)."""
+        rows = [f for f in fs if not q.terms or q.terms & f.terms]
+        if q.years and any(f.years for f in rows):
+            rows = [f for f in rows if f.years and any(f.years[0] <= y <= f.years[1] for y in q.years)]
+        if not q.amounts:
+            return rows
+        tiered = [f for f in rows if f.tier]
+        if tiered:
+            keep: list[Fact] = []
+            for a in q.amounts:            # each amount gets its own tier; nested ceilings take the tightest
+                fits = [f for f in tiered if f.tier[0] <= a <= f.tier[1]]
+                if fits:
+                    w = min(f.tier[1] - f.tier[0] for f in fits)
+                    keep += [f for f in fits if f.tier[1] - f.tier[0] == w and all(f is not k for k in keep)]
+            return keep
+        big = max(q.amounts)
+        floors = [f for f in rows if (f.row.min_earn or 0) <= big]
+        best: dict[tuple, Fact] = {}
+        for f in floors:                   # per term, the highest "Min. to Earn" the deposit reaches
+            k = tuple(sorted(f.terms))
+            if k not in best or (f.row.min_earn or 0) > (best[k].row.min_earn or 0):
+                best[k] = f
+        return [f for f in floors if best[tuple(sorted(f.terms))] is f]
+
     def _rate_groups(self, q: Query, view: dict[str, int], not_after: str | None = None):
+        """-> (groups, product_found). product_found with no groups means the product exists but not for the
+        asked term / model year / amount: the caller refuses instead of quoting a neighbouring product."""
         idf = self._idf()
         want = sorted(set(q.ptoks))
         if not want:
-            return []
+            return [], False
         if self.bm25._dirty:
             self.bm25._finalize()
         # A word no rate table uses weighs as much as it is rare on the site: "construction" (a real product
         # with no published rate) sinks coverage and forces a refusal, a common verb like "put" barely counts.
         cidf, cmax = self.bm25.idf, max(self.bm25.idf.values(), default=self._max_idf)
-        denom = sum(idf[t] if t in idf else min(self._max_idf, cidf.get(t, cmax)) for t in want)
-        groups: dict[tuple[int, int], list[tuple[float, Fact]]] = defaultdict(list)
+        weight = {t: idf[t] if t in idf else min(self._max_idf, cidf.get(t, cmax)) for t in want}
+        denom = sum(weight.values())
+        # Variant words alone ("jumbo", "refinance", "business") never identify a product: a jumbo
+        # *mortgage* question must not land on jumbo *certificates*.
+        nouns = [t for t in want if t not in VARIANT_WORDS]
+        noun_denom = sum(weight[t] for t in nouns)
+        cands: dict[tuple[int, int], list[tuple[float, Fact]]] = defaultdict(list)
         for did in sorted(set(view.values())):
             for fi in self.facts_by_doc.get(did, ()):
                 f = self.facts[fi]
@@ -423,10 +474,22 @@ class Knowledge:
                     continue
                 s = sum(idf[t] for t in want if t in f.toks)
                 # In "X and Y" each product covers only its half of the question; the union is checked below.
-                if s > 0 and s / denom >= (0.25 if q.multi and not q.listing else 0.5):
-                    groups[(did, f.row.table)].append((s, f))
+                if s <= 0 or s / denom < (0.25 if q.multi and not q.listing else 0.5):
+                    continue
+                if nouns and not q.multi and sum(idf[t] for t in nouns if t in f.toks) / noun_denom < 0.5:
+                    continue
+                cands[(did, f.row.table)].append((s, f))
+        if not cands:
+            return [], False
+        groups = {}
+        for k, g in cands.items():
+            rows = self._qualify(q, [f for _, f in g])
+            if rows:
+                groups[k] = [(s, f) for s, f in g if any(f is r for r in rows)]
         if not groups:
-            return []
+            return [], True
+        if q.amounts and any(any(f.tier for _, f in g) for g in groups.values()):
+            groups = {k: g for k, g in groups.items() if any(f.tier for _, f in g)}   # tiered products answer
         top = max(s for g in groups.values() for s, _ in g)
         # A listing question ("what cards do you offer") wants every matching product, not just the best one.
         floor = 0.0 if q.listing else top * 0.999
@@ -444,25 +507,33 @@ class Knowledge:
                 tied[best] = [f for _, f in groups[best]]
                 covered |= set().union(*(f.toks for f in tied[best]))
             if sum(idf.get(t, 0) for t in want if t in covered) / denom < 0.5:
-                return []           # together the products still miss most of the question: abstain
+                return [], True     # together the products still miss most of the question: abstain
         best_bucket = max(_bucket(self.docs[k[0]].auth) for k in tied)
         out = [(k, fs) for k, fs in sorted(tied.items()) if _bucket(self.docs[k[0]].auth) == best_bucket]
-        if q.amounts:
-            # Ceiling tiers nest ("$100,000 or less" also sits inside "$300,000 or less"): keep the tightest.
-            def width(f):
-                return f.tier[1] - f.tier[0] if f.tier else float("inf")
-            out = [(k, [f for f in fs if width(f) == min(width(g) for g in fs)]) for k, fs in out]
-        return out
+        if not q.listing:
+            # A product page can embed an old copy of a table (a 2025 mortgage table on the checking page).
+            # For the same product family, term and tier, only the newest stated effective date survives.
+            def same(f):
+                return _fact_key(f)[0], frozenset(f.terms), f.tier
+            newest: dict[tuple, str] = {}
+            for _, fs in out:
+                for f in fs:
+                    newest[same(f)] = max(newest.get(same(f), ""), f.row.effective or "")
+            out = [(k, fs) for k, fs in out if all((f.row.effective or "") >= newest[same(f)] for f in fs)]
+        return out, True
 
     def _rate(self, q: Query, sid: str, view: dict[str, int], not_after: str | None = None):
-        groups = self._rate_groups(q, view, not_after)
+        groups, product_found = self._rate_groups(q, view, not_after)
         if not groups:
+            if product_found and q.intent == "rate" and (q.terms or q.years or q.amounts):
+                return self._refuse("the product exists, but not for that term, model year or amount")
             return None
         order = {did: i for i, did in enumerate(view.values())}
         # Merge identical products shown on several pages (rate sheet + product page + stale promo copy).
+        # Labels are compared without punctuation: "$832750" on one page is "$832,750" on another.
         merged: dict[tuple, list[tuple[tuple[int, int], list[Fact]]]] = defaultdict(list)
         for key, fs in groups:
-            sig = tuple(sorted(tuple(f.row.labels) for f in fs))
+            sig = tuple(sorted(re.sub(r"[^a-z0-9+]", "", " ".join(f.row.labels).lower()) for f in fs))
             merged[sig].append((key, fs))
         products, notes, sources = [], [], []
         for members in merged.values():
@@ -489,7 +560,9 @@ class Knowledge:
             rows = [pick]
             if "jumbo" in pick[1].flags and "jumbo" not in q.flags and plain:
                 rows.append(max(plain, key=val))     # the jumbo tops the list; also name the best regular one
-        text = self._compose_rates(q, rows)
+        mins = list(dict.fromkeys(f"{f.row.caption or f.row.labels[0]}: {f.row.min_open} minimum to open"
+                                  for _, f in rows if f.row.min_open))
+        text = "; ".join(mins) + "." if q.wants_minimum and mins else self._compose_rates(q, rows)
         if q.history:
             text = f"{text} {self._history_text(q, sid, rows)}".strip()
         if q.intent == "url":
@@ -587,7 +660,7 @@ class Knowledge:
                             key=lambda x: (-x[0], x[1]))
         for score, pid, did in ranked[:12]:
             heading, text = self.pass_text[pid]
-            if need_pct and (self.docs[did].auth < 2 or not RATE_STATEMENT.search(text)
+            if need_pct and (_bucket(self.docs[did].auth) < 4 or not RATE_STATEMENT.search(text)
                              or (q.terms and not q.terms & terms(text))
                              or self._coverage(q, pid, did, product_only=True) < 0.75):
                 continue
@@ -597,8 +670,12 @@ class Knowledge:
                 continue          # an FAQ question line is not an answer
             if "http" in text and len(re.sub(r"\([^)]*https?://[^)]*\)", " ", text).split()) < 8:
                 continue          # link-only navigation ("Continue Cancel Keep reading (url)") carries no answer
-            if self._coverage(q, pid, did) < 0.4:
+            cov = self._coverage(q, pid, did)
+            if cov < 0.4:
                 continue
+            doc = self.docs[did]
+            if doc.kind in ("news", "blog") and (cov < 0.5 or not set(q.toks) & set(tokens(doc.title))):
+                continue      # a dated story answers only when it is about the question, not merely near it
             if picked and (score < 0.6 * picked[0][0] or any(text == t for _, _, _, t in picked)):
                 continue
             picked.append((score, pid, did, text))
@@ -636,6 +713,13 @@ class Knowledge:
 
     def _address(self, q: Query, sid: str, view: dict[str, int]):
         name = (q.branch or "").lower()
+        if not name and re.search(r"\bmail(ing)?\b|\bp\.?\s?o\.? box\b|\bsend (a )?(letter|check|payment)", q.text, re.I):
+            for did in sorted(set(view.values()), key=lambda d: (-self.docs[d].auth, d)):
+                m = PO_BOX.search(self.docs[did].text)
+                if m and self.docs[did].auth >= 4:
+                    line = clean_inline(m.group(0))
+                    return self.c.Answer(text=f"Dupaco's mailing address is {line}.",
+                                         sources=[self._src(did, sid, line)], confident=True)
         if not name:
             return None
         hits = []
@@ -650,12 +734,17 @@ class Knowledge:
                              confident=True)
 
     def _best_sentences(self, q: Query, text: str, limit: int = 420) -> str:
-        if len(text) <= limit:
+        pat = ANSWER_TYPES.get(q.answer_type) if q.answer_type else None
+        if len(text) <= limit and not (pat and pat.search(text) and len(_sentences(text)) > 2):
             return text
         sents = _sentences(text)
         idf = self.bm25.idf
         qt = set(q.toks)
-        scored = [(sum(idf.get(t, 0) for t in qt & set(tokens(s))), -i, s) for i, s in enumerate(sents)]
+        # The sentence holding the expected answer type (the phone number, the date, the amount) wins over one
+        # that merely repeats the question's words.
+        bonus = max(idf.values(), default=1.0) * 3
+        scored = [(sum(idf.get(t, 0) for t in qt & set(tokens(s))) + (bonus if pat and pat.search(s) else 0), -i, s)
+                  for i, s in enumerate(sents)]
         _, neg_i, best = max(scored)
         i = -neg_i
         if len(best) < 160 and i + 1 < len(sents):
@@ -666,8 +755,11 @@ class Knowledge:
         word = q.count_word
         if not word:
             return None
-        others = [t for t in q.toks if t != word]
+        word = {"location": "branch", "locat": "branch", "office": "branch"}.get(word, word)
+        others = [t for t in q.toks if t not in (word, "location", "locat", "office", "time", "total", "number",
+                                                  "count", "amount", "many")]
         votes: Counter = Counter()
+        docs_per: dict[str, set] = defaultdict(set)
         example: dict[str, tuple[int, str]] = {}
         # ponytail: scans every matching sentence in the snapshot (~10 ms here); index count claims at ingest
         # if the corpus grows by orders of magnitude.
@@ -677,32 +769,41 @@ class Knowledge:
         for _, pid, did in self._ranked_passages(probe, view, k=3000):
             for s in _sentences(self.pass_text[pid][1]):
                 st = tokens(s)
-                if word not in st or (others and len(set(others) & set(st)) < max(1, len(others) // 2)):
+                # Other question words are context, not requirements: half of them must appear (none for one).
+                if not any(t.startswith(word) for t in st) or len(set(others) & set(st)) < len(others) // 2:
                     continue
-                for m in re.finditer(r"(\d[\d,]*|" + ORDINAL_WORDS + r")\+?\s+((?:[\w-]+\s+){0,2}?)([A-Za-z-]+)", s,
-                                     re.I):
-                    if tokens(m.group(3)) == [word] or (tokens(m.group(3)) and tokens(m.group(3))[0] == word):
-                        n = m.group(1)
-                        if (did, n) in voted:
-                            continue
-                        voted.add((did, n))
-                        # Boilerplate counts ("22 branch office locations") drift as branches open and close:
-                        # the most recently dated statement (not after the reference date) wins; page votes
-                        # only break ties.
-                        pub = self.docs[did].published or ""
-                        if pub > ref:
-                            continue
-                        votes[n] += PASSAGE_WEIGHT[self.docs[did].kind]
-                        if pub >= newest.get(n, ("", 0))[0]:
-                            newest[n] = (pub, did)
-                            example[n] = (did, s)
+                found = [m.group(1) for m in re.finditer(r"(\d[\d,]*|" + ORDINAL_WORDS +
+                                                         r")\+?\s+((?:[\w-]+\s+){0,2}?)([A-Za-z-]+)", s, re.I)
+                         if (tokens(m.group(3)) or [""])[0] == word]
+                # "membership has grown to more than 181,000": the noun, a total verb, then the number.
+                found += [m[-1] for m in re.findall(
+                    r"\b" + word + r"\w*\b[^.\d]{0,30}?\b(has grown to|grew to|totals?|reached|exceed\w*|stands at|"
+                    r"is now)\s+(more than |over |nearly |about |almost )?(\d{1,3}(?:,\d{3})+|\d{4,})", s, re.I)]
+                for n in found:
+                    if (did, n) in voted:
+                        continue
+                    voted.add((did, n))
+                    # Boilerplate counts ("22 branch office locations") drift as branches open and close:
+                    # the most recently dated statement (not after the reference date) wins; page votes
+                    # only break ties.
+                    pub = self.docs[did].published or ""
+                    if pub > ref:
+                        continue
+                    votes[n] += PASSAGE_WEIGHT[self.docs[did].kind]
+                    docs_per[n].add(self.docs[did].canon)
+                    if pub >= newest.get(n, ("", 0))[0]:
+                        newest[n] = (pub, did)
+                        example[n] = (did, s)
         if not votes:
             return None
         best = sorted(votes, key=lambda n: (newest[n][0], votes[n], n), reverse=True)[0]
         did, sentence = example[best]
+        # For the conflict report, a figure stated on a single page (e.g. "100,000 branches across the U.S.")
+        # is about something else: only values repeated across pages are listed as disagreeing.
+        repeated = sorted({n for n in votes if len(docs_per[n]) > 1} | {best})
         note = None
-        if len(votes) > 1:
-            note = ("Pages disagree: " + ", ".join(f"{n} (latest {newest[n][0] or 'undated'})" for n in sorted(votes))
+        if len(repeated) > 1:
+            note = ("Pages disagree: " + ", ".join(f"{n} (latest {newest[n][0] or 'undated'})" for n in repeated)
                     + "; used the most recently published statement.")
         return self.c.Answer(text=sentence, sources=[self._src(did, sid, sentence)], confident=True,
                              conflict_note=note)
@@ -714,8 +815,10 @@ class Knowledge:
         return list(self._conflicts)
 
     def _prio(self, sid: str, did: int, f: Fact):
+        # Newest stated effective date first; between equally fresh copies the rate sheet beats a product
+        # page that embeds the same table; crawl time only breaks the remaining ties.
         d = self.docs[did]
-        return (_bucket(d.auth), f.row.effective or "", self.fetched.get((sid, did), ""), d.auth, -did)
+        return (_bucket(d.auth), f.row.effective or "", d.auth, self.fetched.get((sid, did), ""), -did)
 
     def _observations(self):
         """fact identity -> snapshot index -> [(priority, doc, value, fact)] across every crawl (cached)."""
@@ -785,7 +888,9 @@ class Knowledge:
                 if not timeline or timeline[-1][1] != wval:
                     timeline.append((si, wval, wdid, wf))
                 if si != latest:
-                    continue      # cross-page disagreements are judged on the newest crawl only
+                    # Cross-page disagreements are judged on the newest crawl only: reporting stale copies from
+                    # older crawls too was measured to add ~11 entries per real hit and lower F1 (0.55 -> 0.49).
+                    continue
                 for prio, did, val, f in ranked[1:]:
                     # Stale copy: a less authoritative page, or an equally authoritative one with an older
                     # effective date. Same-rank pages crawled minutes apart are not a contradiction.

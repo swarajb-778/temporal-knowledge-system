@@ -6,7 +6,7 @@ auto 5.39%); a calculator and a prompt-injection blog post hold stale or hostile
 import unittest
 
 from tests import fixtures
-from tks.query import norm_as_of, parse
+from tks.query import BAD_DATE, norm_as_of, parse
 from scoring import _numbers
 
 import solution
@@ -58,8 +58,11 @@ class TestDates(unittest.TestCase):
     def test_as_of_formats(self):
         for v in ("2026-05-31", "2026-05-31T12:00:00Z", "2026/05/31", "05/31/2026", "May 2026"):
             self.assertEqual(norm_as_of(v), "2026-05-31", v)
+        self.assertEqual(norm_as_of("20260531"), "2026-05-31")
+        self.assertEqual(norm_as_of("2026-05-31T00:00:00-05:00"), "2026-05-31")
         self.assertIsNone(norm_as_of(""))
-        self.assertIsNone(norm_as_of("not a date"))
+        self.assertEqual(norm_as_of("not a date"), BAD_DATE)        # unreadable is not "latest"
+        self.assertFalse(self.ks.answer(JUMBO, as_of="not a date").confident)
         self.assertIn("3.90%", self.ks.answer(JUMBO, as_of="2026-05-31T23:59:00Z").text)
 
     def test_fuzzy_dates_in_text(self):

@@ -26,7 +26,17 @@ VERSUS = re.compile(r"\b(vs\.?|versus|compared (to|with)|than)\b.*\b(now|today|c
 INJECTION = (r"\b(ignore|disregard|forget|override|bypass)\b(\s+\w+){0,4}?\s+(instructions?|rules?|prompts?|"
              r"guidelines|context|data)\b", r"\b(system|assistant|developer|admin)\s*(prompt)?\s*:",
              r"\b(just\s+)?(say|answer|respond|reply|confirm|output|print|claim|pretend)\b(\s+(that|with|only))?",
-             r"\byou (must|should|will) now\b", r"\bnew instructions?\b")
+             r"\byou (must|should|will) now\b", r"\bnew instructions?\b",
+             r"\b(append|add|include|insert|write|repeat)\b[^'\"]{0,20}['\"][^'\"]{0,200}['\"]")
+# ponytail: a short topic deny-list rather than a classifier; a lexical pun ("weather COVID") is the failure
+# it prevents. Extend it when a new off-topic family shows up in evals.
+OFF_TOPIC = re.compile(r"\b(weather|temperature|forecast for|rain(ing)?|stocks?|stock market|bitcoin|crypto\w*|"
+                       r"lottery|horoscope|recipes?|sports?|scores?|movies?|election|celebrit\w*|nfl|nba)\b", re.I)
+NEGATED = re.compile(r"\b(not|no|without|except|excluding|other than|besides|rather than|never mind)\b(\s+\w+){0,3}?"
+                     r"\s+(an?\s+|the\s+)?(iras?|jumbos?|business|refinanc\w*|intro\w*|roth|traditional)\b", re.I)
+
+
+BAD_DATE = "invalid"        # sentinel: an as_of was given but could not be read
 
 
 def _d(y: int, m: int, day: int | None = None) -> date:
@@ -102,6 +112,12 @@ def norm_as_of(value) -> str | None:
     s = normalize(str(value)).strip()
     if not s:
         return None
+    m = re.fullmatch(r"(20\d\d)(\d\d)(\d\d)", s)          # compact 20260630
+    if m:
+        try:
+            return _d(int(m[1]), int(m[2]), int(m[3])).isoformat()
+        except ValueError:
+            return BAD_DATE
     period, _ = _period(s, 2026, None)
     if period:
         return period[1].isoformat()
@@ -109,7 +125,7 @@ def norm_as_of(value) -> str | None:
     if m:
         return _d(int(m[1]), int(m[2])).isoformat()
     m = re.fullmatch(r"(20\d\d)", s)
-    return f"{s}-12-31" if m else None
+    return f"{s}-12-31" if m else BAD_DATE      # unreadable: never silently mean "latest"
 
 NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
              "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "seventeen": 17, "eighteen": 18, "twenty": 20,
@@ -120,7 +136,8 @@ RATE_INTENT = re.compile(r"\b(rates?|aprs?|apys?|interest|dividends?|yields?|per
 # Member phrasings rewritten to the site's vocabulary before tokenizing.
 PHRASES = ((r"\bhome loans?\b", "mortgage"), (r"\bdrive[- ]?(thru|through)\b", "drive-up"),
            (r"\bsign(ing)? up\b", "join"), (r"\bbecome an? (dupaco )?member\b", "join"),
-           (r"\bover the internet\b|\bon the internet\b", "online"), (r"\blobbies\b", "lobby"))
+           (r"\bover the internet\b|\bon the internet\b", "online"), (r"\blobbies\b", "lobby"),
+           (r"\bshut(s|ting)? down\b|\bshutting\b|\bclosing( down)?\b|\bclosure\b", "close"))
 # Words that qualify a lookup rather than name a product; they must not count against table coverage.
 QUALIFIER_WORDS = {norm_token(w) for w in (
     "highest", "best", "top", "maximum", "max", "most", "lowest", "cheapest", "minimum", "least", "standard",
@@ -131,7 +148,9 @@ QUALIFIER_WORDS = {norm_token(w) for w in (
     "change", "changed", "before", "now", "vs", "versus", "compared", "since", "went", "go", "gone", "up",
     "down", "increase", "increased", "decrease", "decreased", "raise", "raised", "lowered", "dropped",
     "history", "originally", "better", "worse", "higher", "lower", "both", "compare", "still", "why", "true",
-    "really", "correct", "right", "wrong", "actually")}
+    "really", "correct", "right", "wrong", "actually", "back", "ago", "earlier", "later", "around", "roughly",
+    "approximately", "exactly", "precisely", "update", "updated", "updates", "recrawl", "crawl", "posted",
+    "website", "site", "listed", "advertised")}
 FILLER_CAPS = {"dupaco", "the", "which", "what", "your", "each", "any", "a", "an", "is", "are", "do", "does", "can",
                "when", "where", "how", "our", "my", "give", "tell", "me", "for", "of", "at", "in", "to", "and",
                "nearest", "closest", "local", "main", "new", "newest", "that", "this", "near", "every", "all",
@@ -158,10 +177,12 @@ class Query:
     branch: str | None = None
     count_word: str | None = None
     future: bool = False            # asks for a value after the newest crawl ("what will it be next year")
+    off_topic: bool = False         # weather, stocks, sports...: not something a credit union website answers
     history: bool = False           # asks how a value changed, not just what it is
     compare_to: str | None = None   # the earlier date a history question compares against
     multi: bool = False             # "X and Y": answer every product named, not only the best match
     answer_type: str | None = None  # money | phone | date: what a correct passage must contain
+    wants_minimum: bool = False     # "minimum balance / to open": an amount, not the lowest rate
 
 
 def _date_from_text(text: str, default_year: int, today: date | None = None):
@@ -196,6 +217,7 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
     q = Query(text=text, as_of=as_of, toks=tokens(low), ptoks=[])
     q.compare_to = compare_to
     q.future = bool(ref and found and found > ref.isoformat() and FUTURE.search(text))
+    q.off_topic = bool(OFF_TOPIC.search(low))
     q.multi = bool(re.search(r"\b(and|or|vs\.?|versus|both|compare[ds]?|as well as)\b|&|,", low))
     q.terms = terms(low)
     q.years = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", low)]
@@ -218,11 +240,20 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
             q.flags.add(flag)
     if "business" in q.flags and re.search(r"\bpersonal\b", low):
         q.flags.discard("business")     # "personal and business cards": list both segments
+    negated = set()
+    for m in NEGATED.finditer(low):     # "I'm not asking about IRAs" must not turn the IRA filter on
+        word = m.group(4)
+        flag = ("ira" if word.startswith("ira") else "jumbo" if word.startswith("jumbo") else
+                "refinance" if word.startswith("refinanc") else "intro" if word.startswith("intro") else word)
+        q.flags.discard(flag)
+        negated.update(tokens(word))
     if re.search(r"\b(ignor\w*|exclud\w*|without|not|other than|besides|after)\s+(the\s+|an?\s+)?intro", low):
         q.flags.discard("intro")
+    q.wants_minimum = bool(re.search(r"\bminimum (balance|deposit|amount|to open|opening|needed)\b|"
+                                     r"\bhow much (do i need|is needed|to open)\b|\bmin(imum)?\.? to open\b", low))
     if re.search(r"\b(highest|best|top|maximum|max|most)\b", low):
         q.superlative = "max"
-    elif re.search(r"\b(lowest|cheapest|minimum|least)\b", low):
+    elif re.search(r"\b(lowest|cheapest|minimum|least)\b", low) and not q.wants_minimum:
         q.superlative = "min"
 
     if re.search(r"\b(link|url|web ?page|web address|website|which page|what page)\b", low):
@@ -234,12 +265,15 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
     elif re.search(r"\baddress\b|\bwhere is\b|\bwhere's\b|\bwhere are\b|\blocated\b|\bdirections\b",
                    low) and q.terms == set():
         q.intent = "address"
-    elif re.search(r"\bhow many\b|\b(total )?number of\b(?! (the )?(routing|phone|account))", low):
+    elif re.search(r"\bhow many\b|(?<!phone )(?<!routing )(?<!account )(?<!member )(?<!fax )(?<!contact )"
+                   r"(?<!telephone )(?<!tax )\b(total )?number of\b", low):
         q.intent = "count"
         tail = re.split(r"\bhow many\b|\bnumber of\b", low, maxsplit=1)[1]
         after = [t for t in tokens(tail) if t not in ("dupaco", "total")]
         q.count_word = after[0] if after else None
-    elif RATE_INTENT.search(low) or (re.search(r"\b(pay|pays|earn|earns)\b", low)
+    elif q.wants_minimum and re.search(r"\b(savings|checking|certificates?|cds?|money market|account|ira)\b", low):
+        q.intent = "rate"           # the minimum to open lives in the same rate table
+    elif RATE_INTENT.search(low) or (re.search(r"\b(pay|pays|paying|earn|earns|earning|yielding)\b", low)
                                      and not re.search(r"\b(fee|fees|cost|charge|bill|loan payment)\b", low)):
         q.intent = "rate"
     elif re.search(r"\bspecials?\b|\btiers?\b|\bterms\b", low):
@@ -272,6 +306,7 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
             q.answer_type = "money"
         elif re.search(r"\b(when|what date|what day|last day|deadline|close|closing|closed)\b", low):
             q.answer_type = "date"
-    q.ptoks = [t for t in q.toks if t not in RATE_WORDS and t not in QUALIFIER_WORDS
-               and not re.fullmatch(r"\d+k?", t)]
+    qualifiers = QUALIFIER_WORDS - ({"personal"} if re.search(r"\bpersonal loans?\b", low) else set())
+    q.ptoks = [t for t in q.toks if t not in RATE_WORDS and t not in qualifiers and t not in negated
+               and not re.fullmatch(r"\d+(\.\d+)?(k|m|mo|mos|month|yr|yrs|year)?", t)]
     return q

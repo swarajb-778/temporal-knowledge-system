@@ -27,7 +27,8 @@ too under until up us use very want was we were what when where which while who 
 your yours dupaco dupacos credit union union's currently current today still offer offered many between
 going there hi hello thanks thank so put keep stretch shopping looking apply applies wanted getting i'm i've
 i'd planning plan thinking publish published listed quote quoted carry carries financed finance borrow
-borrowing financing moment these days nowadays lately whats hows wheres whens whos""".split())
+borrowing financing moment these days nowadays lately whats hows wheres whens whos buying buy u ur pls
+plz asking ask asked wondering curious question also anyway btw""".split())
 STOP -= {"credit", "off", "up"}
 
 # Members and the site use different words for the same product.
@@ -39,7 +40,10 @@ SYN = {"cd": "certificate", "cds": "certificate", "certificates": "certificate",
        "cards": "card", "employees": "employee", "members": "member", "yr": "year", "years": "year",
        "months": "month", "mo": "month", "drive-up": "drive", "drivethru": "drive", "lobbies": "lobby",
        "mnth": "month", "mth": "month", "mos": "month", "yrs": "year", "cert": "certificate",
-       "certs": "certificate", "acct": "account", "accts": "account", "chkg": "checking", "mtg": "mortgage"}
+       "certs": "certificate", "acct": "account", "accts": "account", "chkg": "checking", "mtg": "mortgage",
+       **dict.fromkeys("""honda toyota ford chevy chevrolet nissan subaru jeep kia hyundai bmw gmc dodge ram tesla
+mazda volkswagen vw lexus audi buick cadillac chrysler mitsubishi volvo acura infiniti lincoln suv sedan
+minivan pickup""".split(), "auto")}
 
 
 SUFFIXES = ("ations", "ation", "itions", "ition", "ions", "ion", "ings", "ing", "ized", "izes", "ize", "ed")

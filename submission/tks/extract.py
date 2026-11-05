@@ -15,7 +15,7 @@ MONTHS = ("january", "february", "march", "april", "may", "june", "july", "augus
 
 PCT = re.compile(r"(\d+(?:\.\d+)?)\s?%")
 MONEY = r"\$\s?(\d[\d,]*(?:\.\d+)?)"
-TERM = re.compile(r"\b(\d{1,3})\s*-?\s*(months?|mos?|mnths?|mths?|years?|yrs?)\b", re.I)
+TERM = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*-?\s*(months?|mos?|mnths?|mths?|years?|yrs?)\b", re.I)
 MODEL_YEARS = re.compile(r"\b(\d{4})\s*[-–]\s*(\d{2,4})\s+model\s+year|\b(\d{4})\s+model\s+year(\s*\(and older\))?", re.I)
 EFFECTIVE = re.compile(r"effective as of (\d{1,2})/(\d{1,2})/(\d{4})", re.I)
 LONG_DATE = re.compile(r"\b(" + "|".join(MONTHS) + r")\s+(\d{1,2}),\s+(\d{4})\b", re.I)
@@ -73,10 +73,10 @@ def tier_range(text: str):
 
 
 def terms(text: str) -> set[int]:
-    """Loan/deposit terms in months: '60 Months' -> {60}, '30-Year' -> {360}."""
+    """Loan/deposit terms in months: '60 Months' -> {60}, '30-Year' -> {360}, '1.5 year' -> {18}."""
     out = set()
     for n, unit in TERM.findall(text):
-        out.add(int(n) * (12 if unit.lower().startswith("y") else 1))
+        out.add(round(float(n) * (12 if unit.lower().startswith("y") else 1)))
     return out
 
 
@@ -145,6 +145,8 @@ class Row:
     line: str
     table: int
     text: str = field(default="")   # caption + headers + labels, for matching
+    min_earn: float | None = None   # "Min. to Earn" floor: a $150,000 deposit qualifies for the jumbo row
+    min_open: str | None = None     # "Min. to Open" as printed, for "what's the minimum to open" questions
 
 
 def _caption(lines: list[str], i: int) -> str:
@@ -209,19 +211,25 @@ def parse_tables(md: str) -> list[Row]:
         effective = _effective(lines, j)
         for line in body:
             cells = _cells(line)
-            labels, lheads, values = [], [], []
+            labels, lheads, values, min_earn, min_open = [], [], [], None, None
             for k, cell in enumerate(cells[:len(header)]):
-                kind = kinds[k]
+                kind, head = kinds[k], header[k].lower()
                 if kind == "label" and cell and cell not in ("—", "-"):
                     labels.append(cell)
                     lheads.append(header[k])
+                elif kind is None and "min" in head and re.search(MONEY, cell):
+                    if "earn" in head:
+                        min_earn = _num(re.search(MONEY, cell).group(1))
+                    elif "open" in head:
+                        min_open = re.search(r"\$\s?\d[\d,]*(?:\.\d+)?", cell).group(0)
                 elif kind not in (None, "label"):
                     pcts = PCT.findall(cell)
-                    if pcts:
+                    if 0 < len(pcts) <= 2:   # 3+ percentages in one cell (intro + range) is ambiguous: skip
                         values.append((kind, "–".join(p + "%" for p in pcts)))
             if values and labels:
                 text = " ".join([caption, section] + lheads + labels)
-                rows.append(Row(caption, labels, lheads, values, effective, line.strip(), t, text))
+                rows.append(Row(caption, labels, lheads, values, effective, line.strip(), t, text,
+                                min_earn, min_open))
         t += 1
         i = j
     return rows
