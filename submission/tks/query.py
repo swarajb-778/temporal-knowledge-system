@@ -25,7 +25,7 @@ VERSUS = re.compile(r"\b(vs\.?|versus|compared (to|with)|than)\b.*\b(now|today|c
 # rely on it - answers are built from site data, never from text in the question.
 INJECTION = (r"\b(ignore|disregard|forget|override|bypass)\b(\s+\w+){0,4}?\s+(instructions?|rules?|prompts?|"
              r"guidelines|context|data)\b", r"\b(system|assistant|developer|admin)\s*(prompt)?\s*:",
-             r"\b(just\s+)?(say|answer|respond|reply|state|confirm|output|print)\s+(that|with|only)\b",
+             r"\b(just\s+)?(say|answer|respond|reply|confirm|output|print|claim|pretend)\b(\s+(that|with|only))?",
              r"\byou (must|should|will) now\b", r"\bnew instructions?\b")
 
 
@@ -37,7 +37,7 @@ def _period(text: str, default_year: int, today: date | None):
     """Find the first date phrase: returns ((start, end), span) or (None, None)."""
     low = text.lower()
     rules = []
-    for m in re.finditer(r"\b(20\d\d)[-/.](\d{1,2})[-/.](\d{1,2})\b", low):
+    for m in re.finditer(r"\b(20\d\d)[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)", low):     # also '...T12:00:00Z'
         rules.append((m, lambda m: (_d(int(m[1]), int(m[2]), int(m[3])),) * 2))
     for m in re.finditer(r"\b(\d{1,2})/(\d{1,2})/(20\d\d)\b", low):
         rules.append((m, lambda m: (_d(int(m[3]), int(m[1]), int(m[2])),) * 2))

@@ -22,6 +22,11 @@ from .search import BM25, STOP, normalize, tokens
 REFUSAL = ("I don't know. That isn't listed on Dupaco's website, so I can't confirm it. "
            "Please contact Dupaco directly.")
 METRIC_NAME = {"apy": "APY", "apr": "APR", "dividend": "dividend rate", "rate": "rate"}
+# Words members misspell most, kept as correction targets even if a crawl happens not to use them.
+DOMAIN_WORDS = frozenset("""interest rate rates annual percentage yield dividend dividends certificate certificates
+mortgage mortgages savings checking account accounts loan loans auto vehicle jumbo special specials money market
+business personal branch branches hours lobby routing number balance minimum maximum refinance equity
+traditional retirement credit card cards platinum rewards visa motorcycle model fixed variable term""".split())
 PASSAGE_WEIGHT = {"rate_sheet": 1.0, "product": 1.0, "guide": 0.8, "promo": 0.7, "news": 0.65, "file": 0.55,
                   "blog": 0.5, "calculator": 0.3, "legal": 0.3, "listing": 0.0}
 
@@ -273,6 +278,7 @@ class Knowledge:
                 words.update(re.findall(r"[a-z]{4,}", normalize(f"{heading} {text}").lower()))
             for f in self.facts:
                 words.update(re.findall(r"[a-z]{4,}", f.row.text.lower()))
+            words.update(DOMAIN_WORDS)
             index: dict[tuple[str, int], list[str]] = defaultdict(list)
             for w in sorted(words):                       # sorted: difflib ties resolve the same every run
                 index[(w[0], len(w))].append(w)
@@ -285,10 +291,13 @@ class Knowledge:
             low = w.lower()
             if low in vocab or low in STOP or (w[0].isupper() and not shouty and m.start() > 0):
                 return w
+            if len(low) == 4:      # short words: only an unambiguous transposition ("laon" -> "loan")
+                swaps = [c for c in index.get((low[0], 4), ()) if sorted(c) == sorted(low)]
+                return swaps[0] if len(swaps) == 1 else w
             cands = [c for n in range(len(low) - 2, len(low) + 3) for c in index.get((low[0], n), ())]
             best = difflib.get_close_matches(low, cands, n=1, cutoff=0.85)
             return best[0] if best else w
-        return re.sub(r"\b[A-Za-z]{5,}\b", fix, normalize(question))
+        return re.sub(r"\b[A-Za-z]{4,}\b", fix, normalize(question))
 
     def _stale_values(self, sid: str, q: Query) -> set[float]:
         """Values that, for the product asked about, only ever appear superseded or stale: never current on
@@ -406,7 +415,8 @@ class Knowledge:
                 if not_after and not (f.row.effective and f.row.effective <= not_after):
                     continue
                 s = sum(idf[t] for t in want if t in f.toks)
-                if s > 0 and s / denom >= 0.5:
+                # In "X and Y" each product covers only its half of the question; the union is checked below.
+                if s > 0 and s / denom >= (0.25 if q.multi and not q.listing else 0.5):
                     groups[(did, f.row.table)].append((s, f))
         if not groups:
             return []
@@ -426,6 +436,8 @@ class Knowledge:
                     break
                 tied[best] = [f for _, f in groups[best]]
                 covered |= set().union(*(f.toks for f in tied[best]))
+            if sum(idf.get(t, 0) for t in want if t in covered) / denom < 0.5:
+                return []           # together the products still miss most of the question: abstain
         best_bucket = max(_bucket(self.docs[k[0]].auth) for k in tied)
         out = [(k, fs) for k, fs in sorted(tied.items()) if _bucket(self.docs[k[0]].auth) == best_bucket]
         if q.amounts:
