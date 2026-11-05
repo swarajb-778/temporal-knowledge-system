@@ -13,7 +13,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SUBMISSION = ROOT / "submission"
-SNAPSHOTS = Path(os.environ.get("TKS_SNAPSHOTS", ROOT.parent / "hackathon-knowledge-kit-participant" / "snapshots"))
+SNAPSHOTS = next((p for p in (Path(os.environ.get("TKS_SNAPSHOTS", ROOT / "snapshots")),
+                               ROOT.parent / "hackathon-knowledge-kit-participant" / "snapshots")
+                  if (p / "05_2026-09-28_latest").is_dir()), ROOT / "snapshots")
 
 # OWASP AST03 (Over-Privileged Skills): the answering code needs no network, processes, dynamic code or
 # serialization formats that execute on load. Anything here is a privilege it must not quietly gain.
