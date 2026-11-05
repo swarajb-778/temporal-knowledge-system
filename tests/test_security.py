@@ -70,13 +70,13 @@ class TestPublishedFiles(unittest.TestCase):
             if path.suffix in (".py", ".md", ".json", ".jsonl", ".txt", ".yml", ".yaml", ".toml", ".cfg", ""):
                 self.assertIsNone(SECRET.search(path.read_text(errors="ignore")), f"possible secret in {path}")
 
-    def test_no_kit_data_or_agent_files(self):
+    def test_only_project_files_are_published(self):
+        allowed = {".github", ".gitignore", "NOTES.md", "README.md", "eval", "evals", "harness", "requirements.txt",
+                   "submission", "tests"}
         for path in tracked_files():
             rel = path.relative_to(ROOT).as_posix()
-            self.assertFalse(rel.endswith((".zip", ".pdf")) or rel.startswith(("snapshots/", "snapshots_zip/")),
-                             f"kit data tracked: {rel}")
-            self.assertFalse(rel.startswith((".cursor/", ".claude/")) or rel in ("AGENTS.md", "CLAUDE.md"),
-                             f"agent file tracked: {rel}")
+            self.assertFalse(rel.endswith((".zip", ".pdf")), f"kit archive or document tracked: {rel}")
+            self.assertIn(rel.split("/")[0], allowed, f"unexpected top-level file tracked: {rel}")
 
     @unittest.skipUnless((SNAPSHOTS / "05_2026-09-28_latest").is_dir(), "snapshots not available")
     def test_no_snapshot_text_redistributed(self):

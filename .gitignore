@@ -12,10 +12,3 @@ __pycache__/
 .env
 .env.*
 .DS_Store
-
-# Local tooling and notes that are not part of the project
-.cursor/
-.claude/
-.plans/
-AGENTS.md
-CLAUDE.md
