@@ -26,6 +26,38 @@ facts; everything else from the best passage. The answer text holds just the res
 qualifiers. Effective dates, quotes and "why I ignored that other number" go into `Source.quote` and
 `conflict_note`, so no incidental number can be mistaken for a stale one.
 
+Before parsing, the question is made robust to how members actually type:
+
+- **Unicode.** One normal form (NFKC, ASCII dashes, quotes and spaces, no emoji) is applied to pages and
+  questions alike.
+- **Spelling.** Misspellings are corrected to the site's own sorted vocabulary ("certifcate", "morgage",
+  "markit"). Run-together words are split ("sharesavings"). Capitalized names are never rewritten into
+  other words, so an unknown city still gets an honest refusal.
+- **Injection.** Markup, `[bracketed]` text, quoted claims carrying numbers, and sentences that claim
+  authority or give instructions are dropped. This only protects the parse; safety comes from answering
+  out of site data.
+- **Dates.** ISO and US dates, datetimes, quarters, halves, seasons, early/mid/late month, US holidays,
+  "N months ago" and "before the August update" are all read. "What will it be next year?" is refused
+  rather than forecast.
+- **Several questions in one message** are answered one by one. Statement sentences ("My car is a 2016
+  model.") ride along as shared context.
+
+The rate engine picks the **product first** (product words and variant flags), then applies the term, model
+year and amount. A product that exists but not for the asked tier is refused, or "not offered; what is
+offered: ..." when the member asked "can I…?". It never drifts onto a neighbouring product. The rows'
+"Min. to Earn" column counts as a floor, so a $150,000 deposit gets the jumbo rate.
+
+History questions ("before it changed", "May vs now") answer from per-fact timelines. Plain questions never
+mention old values.
+
+Passage answers use:
+
+- answer-type matching (a fee wants a dollar amount, "call" a phone number, "when" a date);
+- FAQ question/answer pairing and stacked headings;
+- a recency prior for dated news;
+- an output whitelist: a sentence quoting a value that, for the product asked about, only ever appears
+  superseded is dropped.
+
 ## What "current" means (the rules)
 
 1. **Time.** Use the newest snapshot on or before `as_of` (none means the latest). A page missing from a
@@ -42,9 +74,14 @@ qualifiers. Effective dates, quotes and "why I ignored that other number" go int
    the one matched product is listed.
 5. **Narrative counts** (e.g. "22 branch office locations" boilerplate) take the most recently published
    statement. The 23-branch releases predate the Hy-Vee branch closing on March 31, 2026.
-6. **Honesty.** If no rate table (or authoritative rate sentence) covers the product and term, or a named
-   branch has no published address or hours, the answer is a fixed refusal with `confident=False` and no
-   digits at all (the scorer zeroes refusals that contain numbers).
+6. **Honesty.** A fixed refusal (`confident=False`, no digits at all, since the scorer zeroes refusals that
+   contain numbers) is given when:
+   - no rate table (or authoritative rate sentence) covers the product and term;
+   - a named branch has no published address or hours;
+   - the date precedes the first crawl and no row's effective date covers it.
+7. **Stale embedded tables.** Within a crawl, for the same product family, segment, term and tier, only the
+   newest stated effective date survives. A 2025 mortgage table embedded on the checking page loses to the
+   rate sheet.
 
 `conflicts()` compares the same fact identity across pages and across crawls. A model-year row is keyed
 by its rank in the table, so "2023-26" last year and "2024-27" this year are the same tier. It reports two
@@ -63,12 +100,14 @@ The organizers' scorer is never re-implemented. `evals/run.py` drives `harness/s
 | `evals/temporal.jsonl` | 44 | `as_of` at, between and inside snapshot dates, plus dates written in the question |
 | `evals/refusal.jsonl` | 30 | unanswerable questions and look-alike answerable ones |
 | `evals/extended.jsonl` | 58 | topics outside the public set (IRA, HELOC, business, fees, branches) |
+| `evals/adversarial.jsonl` | 85 | 11 families: typos, unicode, fuzzy dates, history, tier edges, false premises, comparisons, multi-part, injection, out-of-scope, look-alikes |
+| `evals/redteam.jsonl` | 28 | every failure class found by probing the live system with 353 hostile questions |
 | `evals/conflicts_gold.json` | 23 | verified contradictions with the correct winner |
 
 The gold was written independently of the solution. Every item cites the page and snapshot holding its
 value, and `evals/validate_gold.py` checks each expected value against that cited page with the scorer's
-own matcher (all 356 values pass). Items are split into dev and holdout. Tuning used dev only, and the
-holdout was opened once for aggregate error analysis.
+own matcher (all 480 values pass). Items are split into dev and holdout, and tuning used dev only. Each
+holdout was opened once for aggregate error analysis, and only generic root causes were fixed after that.
 
 The harness adds:
 
@@ -80,15 +119,31 @@ The harness adds:
 - p95 latency and ingest budgets
 - SHA-256 pins on the snapshot zips
 
-Current results (official scorer, public set, with the conflicts gold): **final 0.806**.
+Current results (official scorer, public set, with the conflicts gold): **final 0.816**.
 
-- accuracy 0.84, with zero stale-trap hits
-- consistency 1.0 and speed 1.0 (p95 0.02 s)
-- conflicts F1 0.57 with resolution accuracy 0.70
-- ingest 3.6 s
+- accuracy 0.856, with zero stale-trap hits
+- consistency 1.0 and speed 1.0 (p95 0.11 s)
+- conflicts F1 0.55 with resolution accuracy 0.70
+- ingest 4.2 s
 
-Across all local sets, QA is 0.88 on dev and 0.84 on holdout. The organizers' selftest scores 1.0. The
-starter scored 0.09.
+Across all 365 local items, QA is 0.935 on dev and 0.866 on holdout. The adversarial set scores 0.977 on
+dev and 0.795 on its frozen holdout, with zero stale-number answers on either half. The red-team set
+scores 1.0. The organizers' selftest scores 1.0. The starter scored 0.09.
+
+Some tuning choices were measured rather than assumed:
+
+- BM25 k1/b was swept over {0.9, 1.2} × {0.4, 0.5, 0.75}; the default 1.2/0.5 was best on both splits.
+- Cross-page conflicts are reported for the newest crawl only. Adding older crawls cost precision
+  (F1 0.55 → 0.49).
+- Conflicts use exact row identity, while history uses a layout-robust identity. Merging the two cut F1
+  to 0.50.
+
+Two open questions from the initial data investigation were settled by these measurements:
+
+- **Which page is authoritative.** The authority ranking reproduces the winner of every table-backed gold
+  conflict.
+- **Real changes vs. crawl noise.** About 600 pages change per recrawl, but comparing extracted facts
+  isolates the real value changes.
 
 ```bash
 python harness/run_eval.py --submission submission --eval eval/public_eval.jsonl     # official scorer
@@ -117,10 +172,15 @@ Each mitigation is commented at its site in the code.
 
 ## Limits
 
-Free-text questions rely on lexical retrieval. A reworded question that shares few words with the page
-(e.g. "who is eligible" vs "you can find us in Iowa, Illinois and Wisconsin") can miss. That's the place
-an embedding model would help, but here it would cost dependencies and determinism. Prose-only numbers
-in news posts (Forbes "fifth time") are not compared for conflicts.
+- **Lexical retrieval.** Free-text questions rely on lexical retrieval. A reworded question that shares
+  few words with the page (e.g. "who is eligible" vs "you can find us in Iowa, Illinois and Wisconsin")
+  can miss. That's where an embedding model would help, at the cost of dependencies and determinism.
+- **Generalization gap.** The frozen adversarial holdout (0.795) still trails its dev half (0.977). The
+  remaining misses are mostly multi-step history questions ("which special disappeared between May 19
+  and June 9") that refuse rather than guess.
+- **Business vs personal rates.** When a business rate sheet lags a business product page, the newer stated
+  effective date wins. One adversarial item expects the lagging sheet.
+- **Prose-only numbers** in news posts (Forbes "fifth time") are not compared for conflicts.
 
 The snapshot data, the assignment PDF and the kit zips are not in this repository. Place the kit's
 `snapshots_zip/` (or unpacked `snapshots/`) next to `harness/` to run the evals.
