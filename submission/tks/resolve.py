@@ -332,14 +332,13 @@ class Knowledge:
                 swaps = [c for c in index.get((low[0], 4), ()) if sorted(c) == sorted(low)]
                 return swaps[0] if len(swaps) == 1 else w
             cands = [c for n in range(len(low) - 2, len(low) + 3) for c in index.get((low[0], n), ())]
-            best = difflib.get_close_matches(low, cands, n=1, cutoff=0.85)
-            if not best and len(low) >= 6:      # looser only toward product words: "markit" -> "market"
-                best = difflib.get_close_matches(low, [c for c in cands if c in products], n=1, cutoff=0.8)
+            product_cands = [c for c in cands if c in products]
             # A capitalized word mid-sentence is a name: correct it only to a product word ("Choise" ->
             # "choice"), never to an arbitrary word, so an unknown city stays unknown and is refused.
-            if best and (not proper or best[0] in products):
-                return best[0]
-            return w
+            best = difflib.get_close_matches(low, product_cands if proper else cands, n=1, cutoff=0.85)
+            if not best and len(low) >= 6:      # looser only toward product words: "markit" -> "market"
+                best = difflib.get_close_matches(low, product_cands, n=1, cutoff=0.8)
+            return best[0] if best else w
         return re.sub(r"\b[A-Za-z]{4,}\b", fix, normalize(question))
 
     def _stale_values(self, sid: str, q: Query) -> set[float]:
@@ -400,7 +399,7 @@ class Knowledge:
         asks = [s for s in sents if s.rstrip().endswith("?")]
         context = [s for s in sents if not s.rstrip().endswith("?")]
         if len(asks) < 2 and asks:
-            pieces = re.split(r",?\s+and\s+(?=(?:what|how|does|do|is|are|can|which)\b)", asks[0])
+            pieces = re.split(r",?\s+and\s+(?=(?:what|how|does|do|is|are|can|which)\b)", asks[0], flags=re.I)
             if len(pieces) == 2:
                 asks = [pieces[0].rstrip(",") + "?", pieces[1]]
         if len(asks) < 2:
