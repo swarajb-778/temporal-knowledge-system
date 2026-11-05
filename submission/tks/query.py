@@ -15,7 +15,11 @@ NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "se
 MONTH_DATE = re.compile(r"\b(" + "|".join(MONTHS) + r")\.?(?:\s+(\d{1,2})(?:st|nd|rd|th)?,?)?(?:\s+(\d{4}))?\b", re.I)
 ISO_DATE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b")
 MONEY = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|million)?\b", re.I)
-RATE_INTENT = re.compile(r"\b(rates?|aprs?|apys?|interest|dividends?|yields?|percent)\b|%", re.I)
+RATE_INTENT = re.compile(r"\b(rates?|aprs?|apys?|interest|dividends?|yields?|percent|charging)\b|%", re.I)
+# Member phrasings rewritten to the site's vocabulary before tokenizing.
+PHRASES = ((r"\bhome loans?\b", "mortgage"), (r"\bdrive[- ]?(thru|through)\b", "drive-up"),
+           (r"\bsign(ing)? up\b", "join"), (r"\bbecome an? (dupaco )?member\b", "join"),
+           (r"\bover the internet\b|\bon the internet\b", "online"), (r"\blobbies\b", "lobby"))
 # Words that qualify a lookup rather than name a product; they must not count against table coverage.
 QUALIFIER_WORDS = {norm_token(w) for w in (
     "highest", "best", "top", "maximum", "max", "most", "lowest", "cheapest", "minimum", "least", "standard",
@@ -76,6 +80,8 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
     if as_of is None:
         as_of = found
     low = body.lower().replace("share certificate", "certificate")
+    for a, b in PHRASES:
+        low = re.sub(a, b, low)
     for w, n in NUM_WORDS.items():
         low = re.sub(rf"\b{w}[\s-]+(month|year)", f"{n} \\1", low)
 
@@ -92,13 +98,15 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
         q.metric = "apy"
     elif re.search(r"\baprs?\b|annual percentage rate", low):
         q.metric = "apr"
-    elif "dividend" in low:
+    elif "dividend rate" in low:
         q.metric = "dividend"
     for flag, pat in (("jumbo", r"\bjumbo"), ("ira", r"\bira\b|\biras\b|retirement"), ("roth", r"\broth\b"),
                       ("traditional", r"\btraditional\b"), ("business", r"\bbusiness|commercial"),
                       ("refinance", r"refinanc|\brefi\b"), ("intro", r"\bintro|balance transfer")):
         if re.search(pat, low):
             q.flags.add(flag)
+    if "business" in q.flags and re.search(r"\bpersonal\b", low):
+        q.flags.discard("business")     # "personal and business cards": list both segments
     if re.search(r"\b(ignor\w*|exclud\w*|without|not|other than|besides|after)\s+(the\s+|an?\s+)?intro", low):
         q.flags.discard("intro")
     if re.search(r"\b(highest|best|top|maximum|max|most)\b", low):
@@ -106,13 +114,15 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
     elif re.search(r"\b(lowest|cheapest|minimum|least)\b", low):
         q.superlative = "min"
 
-    if re.search(r"\b(link|url|web ?page|web address|website address)\b", low):
+    if re.search(r"\b(link|url|web ?page|web address|website|which page|what page)\b", low):
         q.intent = "url"
-    elif re.search(r"\baddress\b|\bwhere is\b|\blocated\b", low) and q.terms == set():
-        q.intent = "address"
-    elif re.search(r"\bhours\b|\bwhat time\b|\bopen (on|until) (mon|tue|wed|thu|fri|sat|sun)", low):
+    elif re.search(r"\bhours\b|\bwhat time\b|\bopen (on|until) (mon|tue|wed|thu|fri|sat|sun)|"
+                   r"\bwhen (is|are)\b.*\bopen\b", low):
         q.intent = "hours"
-        q.hours_kind = "drive" if re.search(r"drive|drive-up", low) else "lobby"
+        q.hours_kind = "drive" if re.search(r"drive", low) else "lobby"
+    elif re.search(r"\baddress\b|\bwhere is\b|\bwhere's\b|\bwhere are\b|\blocated\b|\bdirections\b",
+                   low) and q.terms == set():
+        q.intent = "address"
     elif re.search(r"\bhow many\b", low):
         q.intent = "count"
         after = tokens(low.split("how many", 1)[1])
@@ -128,7 +138,7 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
         q.metric = None             # "rate and APR": show both columns
 
     # Case-insensitive on purpose: members type "galena branch" and "GALENA BRANCH" too.
-    for pat in (r"((?:[\w'’.&-]+\s+){1,3})(?:branch|office|location)\b(?!es)",
+    for pat in (r"((?:[\w'’.&-]+,?\s+){1,3})(?:branch|office|location)\b(?!es)",
                 r"\b(?:branch|office|location)\s+(?:in|at|on)\s+((?:[\w'’.&-]+\s*){1,2})"):
         m = re.search(pat, text, re.I)
         if m:

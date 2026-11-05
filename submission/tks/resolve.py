@@ -101,7 +101,7 @@ def _topic(f: Fact, metric: str) -> str:
 
 STREET = {"avenue": "ave", "street": "st", "road": "rd", "drive": "dr", "lane": "ln", "boulevard": "blvd",
           "highway": "hwy", "court": "ct", "place": "pl", "parkway": "pkwy", "north": "n", "south": "s",
-          "east": "e", "west": "w"}
+          "east": "e", "west": "w", "iowa": "ia", "illinois": "il", "wisconsin": "wi", "ill": "il"}
 
 
 def _place_words(text: str) -> list[str]:
