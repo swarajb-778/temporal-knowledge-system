@@ -222,6 +222,8 @@ class Knowledge:
         return self.snaps[-1][0]
 
     def _src(self, did: int, sid: str, quote: str = ""):
+        # OWASP AST09 (No Governance): every answer and conflict is auditable - it names the page, the crawl it
+        # came from and the exact row/sentence used, so a wrong answer can be traced to its input.
         return self.c.Source(url=self.docs[did].url, snapshot_id=sid, quote=quote[:240] or None)
 
     def _refuse(self, note: str | None = None):

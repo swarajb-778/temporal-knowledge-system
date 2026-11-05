@@ -1,0 +1,2 @@
+# No third-party packages: the solution and its tests use the Python 3.11 standard library only.
+# OWASP AST02 (Supply Chain Compromise): zero runtime dependencies means nothing to typosquat, pin or audit.

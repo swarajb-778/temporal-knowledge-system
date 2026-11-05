@@ -87,8 +87,24 @@ def ask(ks, it):
     return ans, err, time.time() - t
 
 
+def check_pins(snapshots: Path) -> None:
+    """OWASP AST07 (Update Drift): results are only comparable on the exact inputs the gold was verified
+    against. The kit zips are hashed and compared with the REA-recorded pins before anything is scored."""
+    import hashlib
+    pins = json.loads((ROOT / "evals" / "snapshot_pins.json").read_text())
+    zips = snapshots.parent / "snapshots_zip"
+    for name, want in pins.items():
+        path = zips / name
+        if name.startswith("_") or not path.exists():
+            continue
+        got = hashlib.sha256(path.read_bytes()).hexdigest()
+        if got != want:
+            raise SystemExit(f"snapshot {name} changed: sha256 {got} != pinned {want}")
+
+
 def run(args) -> int:
     no_network()
+    check_pins(args.snapshots)
     snaps = load_snapshots(args.snapshots)
     ks = load_submission(ROOT / "submission")
     t0 = time.time()
