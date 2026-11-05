@@ -99,14 +99,17 @@ def model_years(text: str):
 
 def clean_inline(s: str) -> str:
     s = s.replace("\\r\\n", " ").replace("\\\\", "\\")
-    s = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", s)                       # images
+    # Bounded, bracket-free spans keep every scan local: unbounded [^\]]* rescans to the end of a hostile
+    # page from each "[" (quadratic, measured 33 s on 130 KB of brackets).
+    s = re.sub(r"!\[[^\][]{0,300}\]\([^)]{0,2048}\)", " ", s)        # images
 
     def link(m):
-        text, url = m.group(1).strip(), m.group(2)
-        if not text or url.startswith(("tel:", "mailto:", "#")) or "#" in url and url.split("#")[0] == "":
+        text, url = m.group(1).strip(), (m.group(2).split() or [""])[0]
+        if not text or url.startswith(("tel:", "mailto:", "#")):
             return text
         return f"{text} ({url})"
-    s = re.sub(r"\[([^\]]*)\]\(([^)\s]+)[^)]*\)", link, s)
+    # One class for the target: two adjacent overlapping classes backtrack quadratically on "[x](" + 130 KB.
+    s = re.sub(r"\[([^\][]{0,300})\]\(([^)\s][^)]{0,2048})\)", link, s)
     s = re.sub(r"\\([*#_|\[\]()\\-])", r"\1", s)
     s = s.replace("**", "").replace("__", "")
     s = re.sub(r"(?<!\w)\*(?!\s)|(?<=\S)\*(?!\w)", "", s)

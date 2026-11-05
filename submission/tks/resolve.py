@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -29,7 +30,8 @@ def _site(netloc: str) -> str:
 
 RATE_STATEMENT = re.compile(r"\d+\.\d+\s?%\s*(?:\(?(?:apr|apy)\)?|annual percentage|dividend|interest|fixed|"
                             r"variable)|\b(?:apr|apy|rate)\s*:\s*\d+\.\d+\s?%", re.I)
-ADDRESS = re.compile(r"^\s*\d{2,6}\s+[A-Z0-9][^,\n]{2,60},\s*[A-Za-z .]+,\s*[A-Z]{2},?\s*\d{5}\b.*$", re.M)
+ADDRESS = re.compile(r"^[ \t]*\d{2,6}[ \t]+[A-Z0-9][^,\n]{2,60},[ \t]*[A-Za-z][A-Za-z .]{0,40},[ \t]*[A-Z]{2},?"
+                     r"[ \t]*\d{5}\b.*$", re.M)
 
 
 @dataclass
@@ -242,7 +244,8 @@ class Knowledge:
     def _src(self, did: int, sid: str, quote: str = ""):
         # OWASP AST09 (No Governance): every answer and conflict is auditable - it names the page, the crawl it
         # came from and the exact row/sentence used, so a wrong answer can be traced to its input.
-        return self.c.Source(url=self.docs[did].url, snapshot_id=sid, quote=quote[:240] or None)
+        url = urlsplit(self.docs[did].url)._replace(query="", fragment="").geturl()   # no crawler params
+        return self.c.Source(url=url, snapshot_id=sid, quote=quote[:240] or None)
 
     def _refuse(self, note: str | None = None):
         return self.c.Answer(text=REFUSAL, sources=[], confident=False, conflict_note=note)
@@ -283,8 +286,11 @@ class Knowledge:
                 # Rates are only quoted from rate tables or authoritative prose that states a rate.
                 return self._passage(q, sid, view, need_pct=True) or self._refuse()
             return self._passage(q, sid, view) or self._refuse()
+        except MemoryError:
+            raise             # resource exhaustion must not masquerade as an honest "I don't know"
         except Exception as e:  # a crash must never surface a guessed value
-            return self._refuse(f"internal error: {type(e).__name__}: {e}")
+            print(f"answer() failed: {type(e).__name__}: {e}", file=sys.stderr)
+            return self._refuse(f"internal error ({type(e).__name__})")   # no internals in the answer
 
     def _row_ok(self, q: Query, f: Fact) -> bool:
         if q.terms and not (q.terms & f.terms):
@@ -492,8 +498,8 @@ class Knowledge:
         if not per_doc:
             return None
         did = sorted(per_doc, key=lambda d: (-per_doc[d], d))[0]
-        return self.c.Answer(text=f"You can find it at {self.docs[did].url}", sources=[self._src(did, sid)],
-                             confident=True)
+        src = self._src(did, sid)
+        return self.c.Answer(text=f"You can find it at {src.url}", sources=[src], confident=True)
 
     def _address(self, q: Query, sid: str, view: dict[str, int]):
         name = (q.branch or "").lower()

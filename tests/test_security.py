@@ -64,6 +64,25 @@ class TestSubmissionPrivileges(unittest.TestCase):
                     self.assertNotIn(v.replace(",", ""), literals, f"public answer {v} hard-coded")
 
 
+class TestHostileInput(unittest.TestCase):
+    """OWASP AST05: a crawled page is attacker-controlled. Regexes over it must stay linear (no ReDoS)."""
+
+    def test_page_parsers_stay_fast_on_adversarial_pages(self):
+        import time
+        from tests import fixtures
+        import solution
+        n = 130_000
+        hostile = ["[x](" + "a" * n, "[" * n, "| " * n + "\n| --- |\n", "1 " + "a " * n + ", ", " " * n + ":",
+                   "**Lobby**\n" + "Monday: " * (n // 8), "12 Main St, " + "Dubuque " * (n // 8),
+                   "label: " + "1" * n + "%", ("![" * 50 + "](") * (n // 200)]
+        ks = solution.build()
+        start = time.time()
+        ks.ingest(fixtures.Snapshot("01_2026-01-01_x", "2026-01-01",
+                                    [fixtures.page(f"/p{i}", md) for i, md in enumerate(hostile)]))
+        ks.answer("What is the address of the Main branch?")
+        self.assertLess(time.time() - start, 5.0)
+
+
 class TestPublishedFiles(unittest.TestCase):
     def test_no_secrets(self):
         for path in tracked_files():
