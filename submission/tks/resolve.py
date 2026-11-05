@@ -431,6 +431,8 @@ class Knowledge:
         votes: Counter = Counter()
         example: dict[str, tuple[int, str]] = {}
         probe = Query(text=q.text, as_of=q.as_of, toks=[word] + others, ptoks=[])
+        ref = self.snaps[-1][1] if q.as_of is None else str(q.as_of)[:10]
+        voted, newest = set(), {}
         for score, pid, did in self._ranked_passages(probe, view, k=3000):
             for s in _sentences(self.pass_text[pid][1]):
                 st = tokens(s)
@@ -439,16 +441,27 @@ class Knowledge:
                 for m in re.finditer(r"(\d[\d,]*)\+?\s+((?:[\w-]+\s+){0,2}?)([A-Za-z-]+)", s):
                     if tokens(m.group(3)) == [word] or (tokens(m.group(3)) and tokens(m.group(3))[0] == word):
                         n = m.group(1)
-                        w = PASSAGE_WEIGHT[self.docs[did].kind]
-                        votes[n] += w
-                        example.setdefault(n, (did, s))
+                        if (did, n) in voted:
+                            continue
+                        voted.add((did, n))
+                        # Boilerplate counts ("22 branch office locations") drift as branches open and close:
+                        # the most recently dated statement (not after the reference date) wins; page votes
+                        # only break ties.
+                        pub = self.docs[did].published or ""
+                        if pub > ref:
+                            continue
+                        votes[n] += PASSAGE_WEIGHT[self.docs[did].kind]
+                        if pub >= newest.get(n, ("", 0))[0]:
+                            newest[n] = (pub, did)
+                            example[n] = (did, s)
         if not votes:
             return None
-        best = sorted(votes, key=lambda n: (-votes[n], n))[0]
+        best = sorted(votes, key=lambda n: (newest[n][0], votes[n], n), reverse=True)[0]
         did, sentence = example[best]
         note = None
         if len(votes) > 1:
-            note = "Pages disagree: " + ", ".join(f"{n} ({votes[n]:.1f})" for n in sorted(votes)) + "; majority used."
+            note = ("Pages disagree: " + ", ".join(f"{n} (latest {newest[n][0] or 'undated'})" for n in sorted(votes))
+                    + "; used the most recently published statement.")
         return self.c.Answer(text=sentence, sources=[self._src(did, sid, sentence)], confident=True,
                              conflict_note=note)
 

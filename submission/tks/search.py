@@ -44,6 +44,8 @@ def norm_token(w: str) -> str:
 def tokens(text: str, keep_stop: bool = False) -> list[str]:
     out = []
     for w in WORD.findall(text.lower().replace("drive-up", "drive").replace("drive up", "drive")):
+        if not keep_stop and w in STOP:
+            continue
         t = norm_token(w)
         if keep_stop or t not in STOP:
             out.append(t)
