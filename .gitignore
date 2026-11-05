@@ -1,0 +1,21 @@
+# Website data is licensed for the event only; never commit it.
+/snapshots/
+/snapshots_zip/
+*.zip
+*.pdf
+
+# Local outputs
+results/
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+.DS_Store
+
+# Local tooling and notes that are not part of the project
+.cursor/
+.claude/
+.plans/
+AGENTS.md
+CLAUDE.md
