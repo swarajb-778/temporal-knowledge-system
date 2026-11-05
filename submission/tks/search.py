@@ -21,9 +21,9 @@ STOP -= {"credit", "off", "up"}
 # Members and the site use different words for the same product.
 SYN = {"cd": "certificate", "cds": "certificate", "certificates": "certificate", "car": "auto", "cars": "auto",
        "vehicle": "auto", "vehicles": "auto", "automobile": "auto", "truck": "auto", "motorcycles": "motorcycle",
-       "mortgages": "mortgage", "house": "home", "visa": "visa", "rv": "rv", "boat": "boat", "boats": "boat",
+       "mortgages": "mortgage", "house": "home", "boats": "boat",
        "branches": "branch", "locations": "location", "atms": "atm", "hrs": "hours", "hour": "hours",
-       "savings": "savings", "saving": "savings", "checkings": "checking", "rewards": "reward", "loans": "loan",
+       "saving": "savings", "checkings": "checking", "rewards": "reward", "loans": "loan",
        "cards": "card", "employees": "employee", "members": "member", "yr": "year", "years": "year",
        "months": "month", "mo": "month", "drive-up": "drive", "drivethru": "drive", "lobbies": "lobby"}
 

@@ -334,13 +334,8 @@ class Knowledge:
             sig = tuple(sorted(tuple(f.row.labels) for f in fs))
             merged[sig].append((key, fs))
         products, notes, sources = [], [], []
-        for sig, members in merged.items():
-            def prio(m):
-                did = m[0][0]
-                eff = max((f.row.effective or "" for f in m[1]), default="")
-                return (_bucket(self.docs[did].auth), eff, self.fetched.get((sid, did), ""), self.docs[did].auth,
-                        -did)
-            members.sort(key=prio, reverse=True)
+        for members in merged.values():
+            members.sort(key=lambda m: max(self._prio(sid, m[0][0], f) for f in m[1]), reverse=True)
             (wkey, wfacts) = members[0]
             wvals = [f.row.values for f in wfacts]
             for key, fs in members:
@@ -364,11 +359,7 @@ class Knowledge:
         if q.intent == "url":
             urls = sorted({s.url for s in sources}, key=lambda u: (self.docs[view[canon_url(u)]].kind == "rate_sheet", u))
             text = "You can find them at " + " and ".join(f"{u}#rates" for u in urls) + "."
-        seen, uniq = set(), []
-        for s in sources:
-            if s.url not in seen:
-                seen.add(s.url)
-                uniq.append(s)
+        uniq = list({s.url: s for s in reversed(sources)}.values())[::-1]     # first source per URL, in order
         return self.c.Answer(text=text, sources=uniq, confident=True, conflict_note=" ".join(notes) or None)
 
     def _compose_rates(self, q: Query, rows) -> str:
@@ -476,7 +467,7 @@ class Knowledge:
 
     def _url(self, q: Query, sid: str, view: dict[str, int]):
         per_doc: Counter = Counter()
-        for score, pid, did in self._ranked_passages(q, view, k=60):
+        for score, _, did in self._ranked_passages(q, view, k=60):
             per_doc[did] += score
         if not per_doc:
             return None
@@ -522,7 +513,7 @@ class Knowledge:
         probe = Query(text=q.text, as_of=q.as_of, toks=[word] + others, ptoks=[])
         ref = self.snaps[-1][1] if q.as_of is None else str(q.as_of)[:10]
         voted, newest = set(), {}
-        for score, pid, did in self._ranked_passages(probe, view, k=3000):
+        for _, pid, did in self._ranked_passages(probe, view, k=3000):
             for s in _sentences(self.pass_text[pid][1]):
                 st = tokens(s)
                 if word not in st or (others and len(set(others) & set(st)) < max(1, len(others) // 2)):
