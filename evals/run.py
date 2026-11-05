@@ -162,10 +162,12 @@ def robustness(ks, items, report, ingest_s) -> int:
     if ingest_s > INGEST_BUDGET_S:
         bad.append(f"ingest {ingest_s:.0f}s > {INGEST_BUDGET_S}s")
     from scoring import _core
+    sys.path.insert(0, str(ROOT / "submission"))
+    from tks.query import _date_from_text
     latest = max(sid.split("_")[1] for sid in ks.views)            # as_of=<latest date> must equal as_of=None
     for it in items:
-        if it.get("as_of"):
-            continue
+        if it.get("as_of") or _date_from_text(it["question"], 2026)[0]:
+            continue        # an explicit as_of or a date in the text legitimately changes the answer
         base = _core(ks.answer(it["question"]).text)
         rewrites = {"as_of=latest": ks.answer(it["question"], latest).text,
                     "upper": ks.answer(it["question"].upper()).text,
