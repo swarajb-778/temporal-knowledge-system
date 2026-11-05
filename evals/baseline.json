@@ -28,6 +28,7 @@
   "dup-076",
   "dup-080",
   "dup-082",
+  "dup-094",
   "dup-101",
   "dup-102",
   "dup-104",
@@ -50,8 +51,11 @@
   "ext-cert-09",
   "ext-chk-01",
   "ext-chk-02",
+  "ext-chk-04",
   "ext-conf-01",
+  "ext-fee-01",
   "ext-fee-02",
+  "ext-fee-03",
   "ext-loan-03",
   "ext-loan-04",
   "ext-loan-05",
@@ -80,6 +84,7 @@
   "near-04",
   "near-05",
   "near-06",
+  "near-07",
   "near-08",
   "near-09",
   "near-10",
@@ -213,5 +218,5 @@
   "temp-text-mort30-jun30",
   "temp-text-mort832-may20"
  ],
- "final_score": 0.815
+ "final_score": 0.8277
 }
