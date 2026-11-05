@@ -29,7 +29,8 @@ from scoring import score_conflicts, score_item, summarize  # noqa: E402
 
 SETS = {"public": ROOT / "eval" / "public_eval.jsonl", "paraphrase": ROOT / "evals" / "paraphrase.jsonl",
         "temporal": ROOT / "evals" / "temporal.jsonl", "refusal": ROOT / "evals" / "refusal.jsonl",
-        "extended": ROOT / "evals" / "extended.jsonl"}
+        "extended": ROOT / "evals" / "extended.jsonl",
+        "adversarial": ROOT / "evals" / "adversarial.jsonl", "redteam": ROOT / "evals" / "redteam.jsonl"}
 GOLD = ROOT / "evals" / "conflicts_gold.json"
 BASELINE = ROOT / "evals" / "baseline.json"
 P95_BUDGET_S, INGEST_BUDGET_S = 0.5, 120.0
@@ -225,7 +226,7 @@ def determinism(items) -> list[str]:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--snapshots", type=Path, required=True)
-    ap.add_argument("--sets", default="public,paraphrase,temporal,refusal,extended")
+    ap.add_argument("--sets", default="public,paraphrase,temporal,refusal,extended,adversarial,redteam")
     ap.add_argument("--split", choices=["dev", "holdout"])
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--checks", action="store_true", help="latency, metamorphic and determinism checks")

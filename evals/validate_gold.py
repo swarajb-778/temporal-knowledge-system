@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "harness"))
 from scoring import _norm, _numbers, contains  # noqa: E402
 
-FILES = ["paraphrase.jsonl", "temporal.jsonl", "refusal.jsonl", "extended.jsonl"]
+FILES = ["paraphrase.jsonl", "temporal.jsonl", "refusal.jsonl", "extended.jsonl", "adversarial.jsonl",
+         "redteam.jsonl"]
 
 
 def load_corpus(root: Path) -> dict[tuple[str, str], str]:
