@@ -1,0 +1,8 @@
+{
+  "_source": "SHA-256 of each participant-kit snapshot zip, recorded with REA inspect_artifact (0 integrity contradictions)",
+  "01_2026-05-12_baseline.zip": "30d41a04a230f83a1dc02292d4b26400a58c704bf1624ede73e96f9ca2f3c1e7",
+  "02_2026-05-19_recrawl.zip": "aae0d8bb96226a7a3558eb54ecd35beaad53254b178abce5ec331ebd473f0d78",
+  "03_2026-06-09_recrawl.zip": "913d0c367e9f8bbe74af8c73728c4e4e421839b673f7a9150666367cb84c03d2",
+  "04_2026-08-27_rebaseline.zip": "d4e50e939bba78f2b7a22ba429a5fc244169bb8af3a2a42c41553f24ff025ce3",
+  "05_2026-09-28_latest.zip": "25c65d79f66d3de11bb11de95caf30bb80921cd6960f5fca754b7cd0aba4628b"
+}
