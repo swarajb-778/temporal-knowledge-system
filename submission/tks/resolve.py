@@ -37,6 +37,12 @@ def _site(netloc: str) -> str:
 
 RATE_STATEMENT = re.compile(r"\d+\.\d+\s?%\s*(?:\(?(?:apr|apy)\)?|annual percentage|dividend|interest|fixed|"
                             r"variable)|\b(?:apr|apy|rate)\s*:\s*\d+\.\d+\s?%", re.I)
+ANSWER_TYPES = {
+    "money": re.compile(r"\$\s?\d"),
+    "phone": re.compile(r"\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b"),
+    "date": re.compile(r"\b(january|february|march|april|may|june|july|august|september|october|november|"
+                       r"december)\s+\d{1,2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b", re.I),
+}
 ADDRESS = re.compile(r"^[ \t]*\d{2,6}[ \t]+[A-Z0-9][^,\n]{2,60},[ \t]*[A-Za-z][A-Za-z .]{0,40},[ \t]*[A-Z]{2},?"
                      r"[ \t]*\d{5}\b.*$", re.M)
 
@@ -566,7 +572,14 @@ class Knowledge:
         if not q.toks:
             return None
         picked = []
-        for score, pid, did in self._ranked_passages(q, view, k=12):
+        ranked = self._ranked_passages(q, view, k=24)
+        if q.answer_type:
+            # Answer-type matching: "how much is the fee" wants a dollar amount, "what number do I call" a
+            # phone number, "when / last day" a date. Passages without one are pushed down, not dropped.
+            pat = ANSWER_TYPES[q.answer_type]
+            ranked = sorted(((s if pat.search(self.pass_text[p][1]) else s * 0.5, p, d) for s, p, d in ranked),
+                            key=lambda x: (-x[0], x[1]))
+        for score, pid, did in ranked[:12]:
             heading, text = self.pass_text[pid]
             if need_pct and (self.docs[did].auth < 2 or not RATE_STATEMENT.search(text)
                              or (q.terms and not q.terms & terms(text))

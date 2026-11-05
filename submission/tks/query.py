@@ -161,6 +161,7 @@ class Query:
     history: bool = False           # asks how a value changed, not just what it is
     compare_to: str | None = None   # the earlier date a history question compares against
     multi: bool = False             # "X and Y": answer every product named, not only the best match
+    answer_type: str | None = None  # money | phone | date: what a correct passage must contain
 
 
 def _date_from_text(text: str, default_year: int, today: date | None = None):
@@ -263,6 +264,13 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
         q.intent, q.soft = "rate", True     # "what savings accounts can I open" -> products on the rate sheet
 
     q.history = history and q.intent == "rate"
+    if q.intent == "general":
+        if re.search(r"\b(phone|telephone|call|fax)\b", low) and "routing" not in low:
+            q.answer_type = "phone"
+        elif re.search(r"\b(how much|fees?|costs?|charges?|price|minimum deposit)\b", low):
+            q.answer_type = "money"
+        elif re.search(r"\b(when|what date|what day|last day|deadline|close|closing|closed)\b", low):
+            q.answer_type = "date"
     q.ptoks = [t for t in q.toks if t not in RATE_WORDS and t not in QUALIFIER_WORDS
                and not re.fullmatch(r"\d+k?", t)]
     return q

@@ -290,17 +290,25 @@ def hours_blocks(md: str) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
 
 
 def passages(md: str, max_len: int = 700) -> list[tuple[str, str]]:
-    out, heading = [], ""
+    out, heading, asked = [], "", None
     for block in re.split(r"\n\s*\n", md):
         block = block.strip()
         if not block or block.startswith("|"):
             continue
         if block.startswith("#") and "\n" not in block:
             heading = clean_inline(block.lstrip("#").strip())
+            if heading.endswith("?"):
+                asked = heading
             continue
         text = clean_inline(block)
         if len(re.findall(r"[A-Za-z0-9]", text)) < 3:
             continue
+        bare = re.sub(r"\s*\(https?://[^)]*\)\s*$", "", text).lstrip("-* ").strip()
+        if bare.endswith("?") and len(bare) < 200:
+            asked = bare      # FAQ question: it becomes the heading of the answer that follows, so a
+            continue          # paraphrase of the question retrieves the answer passage itself
+        if asked:
+            heading, asked = asked, None
         while len(text) > max_len:
             cut = text.rfind(". ", 0, max_len)
             cut = cut + 1 if cut > max_len // 3 else max_len
