@@ -202,15 +202,20 @@ def robustness(ks, items, report, ingest_s) -> int:
 def determinism(items) -> list[str]:
     """Answers must not depend on PYTHONHASHSEED (set/dict ordering) - run two fresh processes and diff."""
     probe = ROOT / "results" / "evals" / "probe.json"
-    probe.write_text(json.dumps([[it["question"], it.get("as_of")] for it in items[:60]]))
-    code = ("import json,sys;sys.path.insert(0,'harness');from run_eval import load_snapshots,load_submission;"
-            f"ks=load_submission(__import__('pathlib').Path('submission'));"
-            f"[ks.ingest(s) for s in load_snapshots(__import__('pathlib').Path({str(ARGS.snapshots)!r}))];"
-            f"print(json.dumps([ks.answer(q,a).text for q,a in json.load(open({str(probe)!r}))]))")
+    probe.write_text(json.dumps({"snapshots": str(ARGS.snapshots.resolve()),
+                                 "questions": [[it["question"], it.get("as_of")] for it in items[:60]]}))
+    # Fixed program text; the only input travels as a JSON file path in argv (no code-string assembly).
+    code = ("import json,sys;from pathlib import Path;sys.path.insert(0,'harness');"
+            "from run_eval import load_snapshots,load_submission;cfg=json.loads(Path(sys.argv[1]).read_text());"
+            "ks=load_submission(Path('submission'));[ks.ingest(s) for s in load_snapshots(Path(cfg['snapshots']))];"
+            "print(json.dumps([ks.answer(q,a).text for q,a in cfg['questions']]))")
     outs = []
     for seed in ("1", "4242"):
         env = dict(os.environ, PYTHONHASHSEED=seed)
-        p = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
+        p = subprocess.run([sys.executable, "-c", code, str(probe)], cwd=ROOT, env=env, capture_output=True,
+                           text=True)
+        if p.returncode:
+            return [f"determinism probe crashed: {p.stderr.strip()[-300:]}"]
         outs.append(p.stdout)
     if outs[0] != outs[1] or not outs[0]:
         return ["answers differ between PYTHONHASHSEED=1 and 4242"]
