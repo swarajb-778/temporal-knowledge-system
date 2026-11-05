@@ -242,6 +242,7 @@ def prose_facts(md: str) -> list[Row]:
         if not m:
             continue
         label, low = m.group("label").strip(), s.lower()
+        label = re.sub(r"\s+(apy|apr|rate|dividend rate)$", "", label, flags=re.I)
         metric = ("apy" if "apy" in low else "apr" if "apr" in low else "dividend" if "dividend" in low
                   else "rate")
         text = f"{heading} {label}"
