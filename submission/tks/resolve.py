@@ -47,6 +47,7 @@ class Fact:
     terms: frozenset
     years: tuple | None
     tier: tuple | None
+    year_rank: int | None = None     # 0 = newest model-year bucket in its table; survives yearly relabeling
 
 
 def _bucket(auth: int) -> int:
@@ -56,6 +57,46 @@ def _bucket(auth: int) -> int:
 def _first_num(v: str) -> float:
     m = re.search(r"\d+(?:\.\d+)?", v)
     return float(m.group(0)) if m else 0.0
+
+
+FAMILIES = (("card", r"visa|credit card"), ("heloc", r"heloc|line of credit"),
+            ("mortgage", r"conventional|home loans|fha|\bva\b"), ("home_equity", r"home equity"),
+            ("home_improvement", r"home improvement"), ("recreational", r"boat|\brv\b|atv|snowmobile|jet ski"),
+            ("auto", r"auto|motorcycle|model year"), ("personal_loan", r"personal loan"),
+            ("ira", r"\bira|roth|traditional"), ("certificate", r"certificate|term-share|\bcd\b"),
+            ("money_market", r"money market"), ("checking", r"checking"), ("savings", r"savings"))
+
+
+def _fact_key(f: Fact) -> tuple:
+    low = f.row.text.lower()
+    family = next((name for name, pat in FAMILIES if re.search(pat, low)), f.row.caption.lower())
+    labels = " ".join(f.row.labels).lower().replace(",", "")
+    if f.year_rank is not None:     # "2023-26 Model Year" last year == "2024-27 Model Year" this year
+        labels = re.sub(r"model\s+year\s+\d{4}\s*[-–]\s*\d{2,4}|\d{4}\s*[-–]\s*\d{2,4}\s+model\s+year|"
+                        r"\d{4}\s+model\s+year(\s*\(and older\))?", f"model-year-rank-{f.year_rank}", labels)
+    if "business" in f.flags:
+        labels = labels.replace("business", "")
+    labels = re.sub(r"[^a-z0-9+]+", " ", labels).strip()
+    flags = tuple(sorted(f.flags & {"business", "jumbo", "refinance", "intro", "roth", "traditional"}))
+    return family, flags, labels
+
+
+def _main_value(values):
+    d = dict(values)
+    for m in ("apy", "rate", "apr", "dividend"):    # members quote a mortgage's note rate, a deposit's APY
+        if m in d:
+            return m, d[m]
+    return values[0]
+
+
+def _topic(f: Fact, metric: str) -> str:
+    extra = []
+    for n in sorted(f.terms):
+        extra.append(f"{n}-month")
+        if n % 12 == 0:
+            extra.append(f"{n // 12}-year")
+    caption = f.row.caption or ""
+    return " ".join([caption, " ".join(f.row.labels), METRIC_NAME.get(metric, metric)] + extra).strip()
 
 
 def _sentences(text: str) -> list[str]:
@@ -133,6 +174,14 @@ class Knowledge:
                         model_years(labels), tier_range(labels))
             self.facts_by_doc[did].append(len(self.facts))
             self.facts.append(fact)
+        by_table = defaultdict(list)
+        for fi in self.facts_by_doc.get(did, ()):
+            by_table[self.facts[fi].row.table].append(self.facts[fi])
+        for fs in by_table.values():
+            ranges = sorted({f.years for f in fs if f.years}, key=lambda r: -r[1])
+            for f in fs:
+                if f.years:
+                    f.year_rank = ranges.index(f.years)
         blocks = hours_blocks(md)
         if blocks:
             self.hours[did] = blocks
@@ -482,4 +531,90 @@ class Knowledge:
 
     # ------------------------------------------------------------------ conflicts
     def conflicts(self):
-        return []
+        if getattr(self, "_conflicts", None) is None:
+            self._conflicts = self._table_conflicts() + self._count_conflicts()
+        return list(self._conflicts)
+
+    def _prio(self, sid: str, did: int, f: Fact):
+        d = self.docs[did]
+        return (_bucket(d.auth), f.row.effective or "", self.fetched.get((sid, did), ""), d.auth, -did)
+
+    def _table_conflicts(self):
+        obs: dict[tuple, dict[int, list]] = defaultdict(lambda: defaultdict(list))
+        for si, (sid, _) in enumerate(self.snaps):
+            for did in sorted(set(self.views[sid].values())):
+                for fi in self.facts_by_doc.get(did, ()):
+                    f = self.facts[fi]
+                    metric, value = _main_value(f.row.values)
+                    obs[_fact_key(f) + (metric,)][si].append((self._prio(sid, did, f), did, value, f))
+        out, seen = [], set()
+        latest = len(self.snaps) - 1
+        for key in sorted(obs, key=lambda k: (bool(k[1]), k)):
+            per_snap = obs[key]
+            timeline, stale = [], {}
+            for si in sorted(per_snap):
+                ranked = sorted(per_snap[si], key=lambda x: x[0], reverse=True)
+                wprio, wdid, wval, wf = ranked[0]
+                if wprio[0] < 4:
+                    continue      # only a rate sheet or product page can define the current value
+                if not timeline or timeline[-1][1] != wval:
+                    timeline.append((si, wval, wdid, wf))
+                if si != latest:
+                    continue      # cross-page disagreements are judged on the newest crawl only
+                for prio, did, val, f in ranked[1:]:
+                    # Stale copy: a less authoritative page, or an equally authoritative one with an older
+                    # effective date. Same-rank pages crawled minutes apart are not a contradiction.
+                    if val != wval and (prio[0] < wprio[0] or (prio[1] and wprio[1] and prio[1] < wprio[1])):
+                        stale.setdefault(val, (si, did, f, wval, wdid))
+            if not timeline:
+                continue
+            last_si, current, cur_did, cur_f = timeline[-1]
+            topic = _topic(cur_f, key[-1])
+            if len({v for _, v, _, _ in timeline}) > 1:
+                values = list(dict.fromkeys(v for _, v, _, _ in timeline))
+                # IRA and business mirrors of the same special move in lockstep: report the history once.
+                dedupe = (tuple(values), tuple(sorted(cur_f.terms)), "t")
+                if dedupe not in seen:
+                    seen.add(dedupe)
+                    first = timeline[0]
+                    out.append(self.c.Conflict(
+                        topic=topic, values=values,
+                        sources=[self._src(d, self.snaps[si][0], f.row.line) for si, _, d, f in timeline],
+                        resolution=current,
+                        reason=(f"Value changed between snapshots ({first[1]} in {self.snaps[first[0]][0]} -> "
+                                f"{current} in {self.snaps[last_si][0]}); the newest snapshot of the most "
+                                f"authoritative page ({self.docs[cur_did].url}) wins.")))
+            stale = {v: s for v, s in stale.items() if v != current}
+            if stale:
+                values = [current] + sorted(stale)
+                if (key[0], tuple(values), "x") not in seen:
+                    seen.add((key[0], tuple(values), "x"))
+                    srcs = [self._src(cur_did, self.snaps[last_si][0], cur_f.row.line)]
+                    srcs += [self._src(d, self.snaps[si][0], f.row.line) for v, (si, d, f, _, _) in sorted(stale.items())]
+                    where = ", ".join(sorted({f"{self.docs[d].url} ({self.docs[d].kind})"
+                                              for si, d, f, _, _ in stale.values()}))
+                    out.append(self.c.Conflict(
+                        topic=topic, values=values, sources=srcs, resolution=current,
+                        reason=(f"{where} shows {', '.join(sorted(stale))}; {self.docs[cur_did].url} "
+                                f"({self.docs[cur_did].kind}) is authoritative and current.")))
+        # Open contradictions in the newest crawl first, then superseded values; specific before broad.
+        return sorted(out, key=lambda c: (c.reason.startswith("Value changed"), len(c.values)))
+
+    def _count_conflicts(self):
+        """Narrative boilerplate counts that drift between press releases (e.g. branch office locations)."""
+        out = []
+        latest = self.snaps[-1][0]
+        view = self.views[latest]
+        for noun, question in (("branch", "How many branches does Dupaco have?"),):
+            ans = self._count(parse(question), latest, view)
+            if not ans or not ans.conflict_note:
+                continue
+            values = re.findall(r"([\d,]+) \(latest", ans.conflict_note)
+            winner = re.search(r"([\d,]+)\s+" + noun, ans.text)
+            if len(values) > 1 and winner:
+                out.append(self.c.Conflict(
+                    topic=f"number of {noun} office locations ({noun}es)", values=values, sources=ans.sources,
+                    resolution=winner.group(1),
+                    reason="Press-release boilerplate differs by publication date; the most recently "
+                           "published statement wins."))
+        return out
