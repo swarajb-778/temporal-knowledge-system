@@ -1,0 +1,758 @@
+[
+ {
+  "id": "c01",
+  "topic_keywords": [
+   "60-month",
+   "auto"
+  ],
+  "values": [
+   "5.39%",
+   "5.34%"
+  ],
+  "correct_value": "5.39%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.39%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.39%"
+   },
+   {
+    "url": "https://www.dupaco.com/switch-and-earn",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.34%"
+   },
+   {
+    "url": "https://www.dupaco.com/calculators/vehicle-affordability",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.34%"
+   }
+  ]
+ },
+ {
+  "id": "c02",
+  "topic_keywords": [
+   "72-month",
+   "auto"
+  ],
+  "values": [
+   "5.49%",
+   "5.44%"
+  ],
+  "correct_value": "5.49%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.49%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.49%"
+   },
+   {
+    "url": "https://www.dupaco.com/switch-and-earn",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.44%"
+   },
+   {
+    "url": "https://www.dupaco.com/calculators/vehicle-affordability",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.44%"
+   }
+  ]
+ },
+ {
+  "id": "c03",
+  "topic_keywords": [
+   "84-month",
+   "84"
+  ],
+  "values": [
+   "5.59%",
+   "5.54%"
+  ],
+  "correct_value": "5.59%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.59%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.59%"
+   },
+   {
+    "url": "https://www.dupaco.com/switch-and-earn",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.54%"
+   },
+   {
+    "url": "https://www.dupaco.com/calculators/vehicle-affordability",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.54%"
+   }
+  ]
+ },
+ {
+  "id": "c04",
+  "topic_keywords": [
+   "2017-20",
+   "2018"
+  ],
+  "values": [
+   "6.34%",
+   "6.29%"
+  ],
+  "correct_value": "6.34%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "6.34%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "6.34%"
+   },
+   {
+    "url": "https://www.dupaco.com/switch-and-earn",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "6.29%"
+   },
+   {
+    "url": "https://www.dupaco.com/calculators/vehicle-affordability",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "6.29%"
+   }
+  ]
+ },
+ {
+  "id": "c05",
+  "topic_keywords": [
+   "2016",
+   "older"
+  ],
+  "values": [
+   "8.59%",
+   "8.54%"
+  ],
+  "correct_value": "8.59%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "8.59%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "8.59%"
+   },
+   {
+    "url": "https://www.dupaco.com/switch-and-earn",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "8.54%"
+   },
+   {
+    "url": "https://www.dupaco.com/calculators/vehicle-affordability",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "8.54%"
+   }
+  ]
+ },
+ {
+  "id": "c06",
+  "topic_keywords": [
+   "2021-23",
+   "2021-22"
+  ],
+  "values": [
+   "5.64%",
+   "5.59%"
+  ],
+  "correct_value": "5.64%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.64%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.64%"
+   },
+   {
+    "url": "https://www.dupaco.com/switch-and-earn",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.59%"
+   },
+   {
+    "url": "https://www.dupaco.com/calculators/vehicle-affordability",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.59%"
+   }
+  ]
+ },
+ {
+  "id": "c07",
+  "topic_keywords": [
+   "60-month",
+   "model year"
+  ],
+  "values": [
+   "5.19%",
+   "5.39%"
+  ],
+  "correct_value": "5.39%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "5.19%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "5.19%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/auto-motorcycle-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.39%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "5.39%"
+   }
+  ]
+ },
+ {
+  "id": "c08",
+  "topic_keywords": [
+   "30-year",
+   "100,000"
+  ],
+  "values": [
+   "5.875%",
+   "6.25%",
+   "6.125%",
+   "6.375%",
+   "7.13%"
+  ],
+  "correct_value": "7.13%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "01_2026-05-12_baseline",
+    "value": "5.875%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "02_2026-05-19_recrawl",
+    "value": "6.25%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "03_2026-06-09_recrawl",
+    "value": "6.125%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "6.375%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "7.13%"
+   }
+  ]
+ },
+ {
+  "id": "c09",
+  "topic_keywords": [
+   "15-year",
+   "15 year"
+  ],
+  "values": [
+   "5.625%",
+   "6.00%",
+   "6.75%"
+  ],
+  "correct_value": "6.75%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "01_2026-05-12_baseline",
+    "value": "5.625%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "02_2026-05-19_recrawl",
+    "value": "6.00%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "03_2026-06-09_recrawl",
+    "value": "5.875%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "6.75%"
+   }
+  ]
+ },
+ {
+  "id": "c10",
+  "topic_keywords": [
+   "homebuying",
+   "832,750"
+  ],
+  "values": [
+   "6.000%",
+   "6.037%",
+   "7.25%",
+   "7.29%"
+  ],
+  "correct_value": "7.25%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/homebuying-guidance",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "6.000%"
+   },
+   {
+    "url": "https://www.dupaco.com/homebuying-guidance",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "6.037%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "7.25%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/loans/home-loans",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "7.29%"
+   }
+  ]
+ },
+ {
+  "id": "c11",
+  "topic_keywords": [
+   "17-month",
+   "regular"
+  ],
+  "values": [
+   "3.85%",
+   "4.10%"
+  ],
+  "correct_value": "4.10%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "03_2026-06-09_recrawl",
+    "value": "3.85%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "3.95%"
+   },
+   {
+    "url": "https://www.dupaco.com/business-rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "3.85%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "4.10%"
+   }
+  ]
+ },
+ {
+  "id": "c12",
+  "topic_keywords": [
+   "17-month jumbo",
+   "jumbo"
+  ],
+  "values": [
+   "4.05%",
+   "4.20%"
+  ],
+  "correct_value": "4.20%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "03_2026-06-09_recrawl",
+    "value": "3.95%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "4.05%"
+   },
+   {
+    "url": "https://www.dupaco.com/business-rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "3.95%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "4.20%"
+   }
+  ]
+ },
+ {
+  "id": "c13",
+  "topic_keywords": [
+   "jumbo",
+   "100,000"
+  ],
+  "values": [
+   "3.90%",
+   "4.00%"
+  ],
+  "correct_value": "4.00%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "3.90%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "4.00%"
+   }
+  ]
+ },
+ {
+  "id": "c14",
+  "topic_keywords": [
+   "regular",
+   "$1,000"
+  ],
+  "values": [
+   "3.80%",
+   "3.90%"
+  ],
+  "correct_value": "3.90%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "3.80%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "3.90%"
+   }
+  ]
+ },
+ {
+  "id": "c15",
+  "topic_keywords": [
+   "traditional",
+   "ira"
+  ],
+  "values": [
+   "3.90%",
+   "4.00%"
+  ],
+  "correct_value": "4.00%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "3.90%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/retirement",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "3.90%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "4.00%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/retirement",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "4.00%"
+   }
+  ]
+ },
+ {
+  "id": "c16",
+  "topic_keywords": [
+   "12-month",
+   "certificate"
+  ],
+  "values": [
+   "2.90%",
+   "3.40%"
+  ],
+  "correct_value": "3.40%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "02_2026-05-19_recrawl",
+    "value": "2.90%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/savings-account",
+    "snapshot_id": "02_2026-05-19_recrawl",
+    "value": "2.90%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "03_2026-06-09_recrawl",
+    "value": "3.40%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "3.40%"
+   }
+  ]
+ },
+ {
+  "id": "c17",
+  "topic_keywords": [
+   "1st rate",
+   "checking"
+  ],
+  "values": [
+   "3.00%",
+   "2.50%"
+  ],
+  "correct_value": "2.50%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "02_2026-05-19_recrawl",
+    "value": "3.00%"
+   },
+   {
+    "url": "https://www.dupaco.com/newcard-balancetransfer-lp",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "3.00%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "2.50%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/checking-accounts",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "2.50%"
+   }
+  ]
+ },
+ {
+  "id": "c18",
+  "topic_keywords": [
+   "platinum",
+   "visa"
+  ],
+  "values": [
+   "12.50%",
+   "13.00%"
+  ],
+  "correct_value": "12.50%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/personal/credit-cards",
+    "snapshot_id": "03_2026-06-09_recrawl",
+    "value": "12.50%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/credit-cards",
+    "snapshot_id": "03_2026-06-09_recrawl",
+    "value": "13.00%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/credit-cards",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "12.50%"
+   }
+  ]
+ },
+ {
+  "id": "c19",
+  "topic_keywords": [
+   "business share savings",
+   "10,000"
+  ],
+  "values": [
+   "0.20%",
+   "0.15%"
+  ],
+  "correct_value": "0.15%",
+  "kind": "temporal",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/business-rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "0.20%"
+   },
+   {
+    "url": "https://www.dupaco.com/business-rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "0.15%"
+   },
+   {
+    "url": "https://www.dupaco.com/business-rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "0.15%"
+   }
+  ]
+ },
+ {
+  "id": "c20",
+  "topic_keywords": [
+   "share savings",
+   "25,000"
+  ],
+  "values": [
+   "0.20%",
+   "0.35%"
+  ],
+  "correct_value": "0.20%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/personal/savings-account",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "0.20%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/savings-account",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "0.35%"
+   },
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "0.20%"
+   }
+  ]
+ },
+ {
+  "id": "c21",
+  "topic_keywords": [
+   "atv",
+   "snowmobile"
+  ],
+  "values": [
+   "8.89%",
+   "8.54%"
+  ],
+  "correct_value": "8.89%",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/rates",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "8.89%"
+   },
+   {
+    "url": "https://www.dupaco.com/personal/checking-accounts",
+    "snapshot_id": "04_2026-08-27_rebaseline",
+    "value": "8.54%"
+   }
+  ]
+ },
+ {
+  "id": "c22",
+  "topic_keywords": [
+   "branch",
+   "branches"
+  ],
+  "values": [
+   "22",
+   "23",
+   "24"
+  ],
+  "correct_value": "22",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/newsroom/brian-henneger-vp-mortgage-lending",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "22"
+   },
+   {
+    "url": "https://www.dupaco.com/newsroom/dupaco-warns-consumers-about-new-wave-of-irs-impersonation-scams",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "23"
+   },
+   {
+    "url": "https://www.dupaco.com/newsroom/forbes-ranks-dupaco-as-a-top-credit-union-in-america-3",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "24"
+   }
+  ]
+ },
+ {
+  "id": "c23",
+  "topic_keywords": [
+   "forbes"
+  ],
+  "values": [
+   "fourth",
+   "fifth"
+  ],
+  "correct_value": "fifth",
+  "kind": "cross_page",
+  "evidence": [
+   {
+    "url": "https://www.dupaco.com/newsroom/forbes-ranks-dupaco-as-a-top-credit-union-in-america-2",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "fourth"
+   },
+   {
+    "url": "https://www.dupaco.com/newsroom/forbes-ranks-dupaco-as-a-top-credit-union-in-america-3",
+    "snapshot_id": "05_2026-09-28_latest",
+    "value": "fifth"
+   }
+  ]
+ }
+]
