@@ -152,7 +152,7 @@ def _caption(lines: list[str], i: int) -> str:
         j -= 1
         if not raw:
             continue
-        if raw.startswith(("|", "[", "!")) or EFFECTIVE.search(raw) or len(raw) > 80:
+        if raw.startswith(("|", "[", "!", "- [", "* [")) or EFFECTIVE.search(raw) or len(raw) > 80:
             break
         got.append(clean_inline(raw.lstrip("#").strip()))
         if raw.startswith("#"):
@@ -175,6 +175,18 @@ def _effective(lines: list[str], i: int):
     return None
 
 
+SECTION = re.compile(r"^\s*(?:#{1,6}\s+(.{3,70})|[-*]\s*\[([^\]]{3,70})\]\([^)]*#[^)]*\))\s*$")
+
+
+def _section(lines: list[str], i: int) -> str:
+    """Nearest section marker above a table: a heading or an in-page tab link ('- [Certificate Rates](...#)')."""
+    for j in range(i - 1, max(-1, i - 150), -1):
+        m = SECTION.match(lines[j])
+        if m:
+            return clean_inline(m.group(1) or m.group(2))
+    return ""
+
+
 def parse_tables(md: str) -> list[Row]:
     lines = md.splitlines()
     rows, i, t = [], 0, 0
@@ -185,6 +197,7 @@ def parse_tables(md: str) -> list[Row]:
         header = _cells(lines[i])
         kinds = [_metric(h) for h in header]
         caption = _caption(lines, i)
+        section = _section(lines, i)
         j = i + 2
         body = []
         while j < len(lines) and lines[j].startswith("|"):
@@ -204,7 +217,7 @@ def parse_tables(md: str) -> list[Row]:
                     if pcts:
                         values.append((kind, "–".join(p + "%" for p in pcts)))
             if values and labels:
-                text = " ".join([caption] + lheads + labels)
+                text = " ".join([caption, section] + lheads + labels)
                 rows.append(Row(caption, labels, lheads, values, effective, line.strip(), t, text))
         t += 1
         i = j

@@ -13,7 +13,8 @@ me might more most much my need no not now of off on once only or other our out 
 same see she should show so some tell than that the their them then there these they this those through to
 too under until up us use very want was we were what when where which while who why will with would you
 your yours dupaco dupacos credit union union's currently current today still offer offered many between
-going there hi hello thanks thank so""".split())
+going there hi hello thanks thank so put keep stretch shopping looking apply applies wanted getting i'm i've
+i'd planning plan thinking""".split())
 STOP -= {"credit", "off", "up"}
 
 # Members and the site use different words for the same product.
@@ -24,8 +25,9 @@ SYN = {"cd": "certificate", "cds": "certificate", "certificates": "certificate",
        "savings": "savings", "saving": "savings", "checkings": "checking", "rewards": "reward", "loans": "loan",
        "cards": "card", "employees": "employee", "members": "member", "yr": "year", "years": "year",
        "months": "month", "mo": "month", "drive-up": "drive", "drivethru": "drive", "lobbies": "lobby"}
-RATE_WORDS = {"rate", "rates", "apr", "apy", "interest", "dividend", "dividends", "yield", "annual",
-              "percentage", "pay", "pays", "paying", "earn", "earns", "charge"}
+
+
+SUFFIXES = ("ations", "ation", "itions", "ition", "ions", "ion", "ings", "ing", "ized", "izes", "ize", "ed")
 
 
 def norm_token(w: str) -> str:
@@ -38,7 +40,17 @@ def norm_token(w: str) -> str:
         return w[:-3] + "y"
     if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
         w = w[:-1]
-    return SYN.get(w, w)
+    w = SYN.get(w, w)
+    # ponytail: suffix stripping instead of a real stemmer; keeps stems >= 5 chars so "rates" stays "rate".
+    for suf in SUFFIXES:
+        if w.endswith(suf) and len(w) - len(suf) >= 5:
+            return w[:-len(suf)]
+    return w
+
+
+RATE_WORDS = {norm_token(w) for w in ("rate", "rates", "apr", "apy", "interest", "dividend", "dividends", "yield",
+                                      "annual", "percentage", "pay", "pays", "paying", "earn", "earns", "earning",
+                                      "charge", "charged")}
 
 
 def tokens(text: str, keep_stop: bool = False) -> list[str]:
@@ -55,7 +67,7 @@ def tokens(text: str, keep_stop: bool = False) -> list[str]:
 class BM25:
     """Inverted index; documents are opaque integer ids added in order."""
 
-    def __init__(self, k1: float = 1.2, b: float = 0.75):
+    def __init__(self, k1: float = 1.2, b: float = 0.5):
         self.k1, self.b = k1, b
         self.post: dict[str, list[tuple[int, int]]] = defaultdict(list)
         self.lens: list[int] = []

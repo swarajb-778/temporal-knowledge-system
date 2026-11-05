@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 
 from .extract import MONTHS, terms
-from .search import RATE_WORDS, tokens
+from .search import RATE_WORDS, norm_token, tokens
 
 NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
              "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "seventeen": 17, "eighteen": 18, "twenty": 20,
@@ -17,10 +17,12 @@ ISO_DATE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b")
 MONEY = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|million)?\b", re.I)
 RATE_INTENT = re.compile(r"\b(rates?|aprs?|apys?|interest|dividends?|yields?|percent)\b|%", re.I)
 # Words that qualify a lookup rather than name a product; they must not count against table coverage.
-QUALIFIER_WORDS = {"highest", "best", "top", "maximum", "max", "most", "lowest", "cheapest", "minimum", "least",
-                   "standard", "tier", "between", "link", "url", "website", "page", "web", "site", "find", "check",
-                   "look", "option", "product", "type", "kind", "available", "all", "list", "every", "offer",
-                   "much", "many", "term", "month", "year", "new"}
+QUALIFIER_WORDS = {norm_token(w) for w in (
+    "highest", "best", "top", "maximum", "max", "most", "lowest", "cheapest", "minimum", "least", "standard",
+    "tier", "tiers", "between", "link", "url", "website", "page", "web", "site", "find", "look", "option",
+    "options", "product", "products", "type", "types", "kind", "available", "all", "list", "every", "offer",
+    "much", "many", "term", "month", "year", "new", "used", "range", "personal", "qualify", "intro",
+    "introductory", "ignoring", "excluding", "besides")}
 FILLER_CAPS = {"dupaco", "the", "which", "what", "your", "each", "any", "a", "is", "are", "do", "does", "can",
                "when", "where", "how", "our", "my", "give", "tell", "me", "for", "of", "at", "in", "to", "and"}
 
@@ -69,7 +71,7 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
         body = text[:span[0]] + " " + text[span[1]:]
     if as_of is None:
         as_of = found
-    low = body.lower()
+    low = body.lower().replace("share certificate", "certificate")
     for w, n in NUM_WORDS.items():
         low = re.sub(rf"\b{w}[\s-]+(month|year)", f"{n} \\1", low)
 
@@ -93,6 +95,8 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
                       ("refinance", r"refinanc|\brefi\b"), ("intro", r"\bintro|balance transfer")):
         if re.search(pat, low):
             q.flags.add(flag)
+    if re.search(r"\b(ignor\w*|exclud\w*|without|not|other than|besides|after)\s+(the\s+|an?\s+)?intro", low):
+        q.flags.discard("intro")
     if re.search(r"\b(highest|best|top|maximum|max|most)\b", low):
         q.superlative = "max"
     elif re.search(r"\b(lowest|cheapest|minimum|least)\b", low):
@@ -114,10 +118,16 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
     q.listing = bool(re.search(r"\b(cards|certificates|cds|accounts|loans|products|options|all|list|every|"
                                r"types? of|kinds? of)\b", low))
 
-    m = re.search(r"((?:[A-Z][\w'’.&-]*\s+){1,3})(?:branch|office|location)\b", text)
-    if m:
-        words = [w for w in m.group(1).split() if w.lower().strip(".,") not in FILLER_CAPS]
-        q.branch = " ".join(words) or None
+    for pat in (r"((?:[A-Z][\w'’.&-]*\s+){1,3})(?:branch|office|location)\b",
+                r"\b(?:branch|office|location)\s+(?:in|at|on)\s+((?:[A-Z][\w'’.&-]*\s*){1,3})"):
+        m = re.search(pat, text)
+        if m:
+            words = [re.sub(r"['’]s$", "", w).strip(".,?") for w in m.group(1).split()]
+            words = [w for w in words if w and w.lower() not in FILLER_CAPS]
+            if words:
+                q.branch = " ".join(words)
+                break
 
-    q.ptoks = [t for t in q.toks if t not in RATE_WORDS and t not in QUALIFIER_WORDS and not t.isdigit()]
+    q.ptoks = [t for t in q.toks if t not in RATE_WORDS and t not in QUALIFIER_WORDS
+               and not re.fullmatch(r"\d+k?", t)]
     return q

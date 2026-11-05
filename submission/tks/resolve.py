@@ -229,7 +229,12 @@ class Knowledge:
         want = sorted(set(q.ptoks))
         if not want:
             return []
-        denom = sum(idf.get(t, self._max_idf) for t in want)
+        if self.bm25._dirty:
+            self.bm25._finalize()
+        # A word no rate table uses weighs as much as it is rare on the site: "construction" (a real product
+        # with no published rate) sinks coverage and forces a refusal, a common verb like "put" barely counts.
+        cidf, cmax = self.bm25.idf, max(self.bm25.idf.values(), default=self._max_idf)
+        denom = sum(idf[t] if t in idf else min(self._max_idf, cidf.get(t, cmax)) for t in want)
         groups: dict[tuple[int, int], list[tuple[float, Fact]]] = defaultdict(list)
         for did in sorted(set(view.values())):
             for fi in self.facts_by_doc.get(did, ()):
@@ -246,7 +251,13 @@ class Knowledge:
         floor = 0.0 if q.listing else top * 0.999
         tied = {k: [f for s, f in g] for k, g in groups.items() if max(s for s, _ in g) >= floor}
         best_bucket = max(_bucket(self.docs[k[0]].auth) for k in tied)
-        return [(k, fs) for k, fs in sorted(tied.items()) if _bucket(self.docs[k[0]].auth) == best_bucket]
+        out = [(k, fs) for k, fs in sorted(tied.items()) if _bucket(self.docs[k[0]].auth) == best_bucket]
+        if q.amounts:
+            # Ceiling tiers nest ("$100,000 or less" also sits inside "$300,000 or less"): keep the tightest.
+            def width(f):
+                return f.tier[1] - f.tier[0] if f.tier else float("inf")
+            out = [(k, [f for f in fs if width(f) == min(width(g) for g in fs)]) for k, fs in out]
+        return out
 
     def _rate(self, q: Query, sid: str, view: dict[str, int]):
         groups = self._rate_groups(q, view)
@@ -349,12 +360,12 @@ class Knowledge:
         out.sort(key=lambda x: (-x[0], x[1]))
         return out[:k]
 
-    def _coverage(self, q: Query, pid: int, did: int) -> float:
+    def _coverage(self, q: Query, pid: int, did: int, product_only: bool = False) -> float:
         idf = self.bm25.idf
         mx = max(idf.values()) if idf else 1.0
         heading, text = self.pass_text[pid]
         have = set(tokens(f"{self.docs[did].title} {heading} {text}"))
-        want = set(q.toks)
+        want = set(q.ptoks if product_only else q.toks)
         if not want:
             return 0.0
         return sum(idf.get(t, mx) for t in want & have) / sum(idf.get(t, mx) for t in want)
@@ -365,12 +376,16 @@ class Knowledge:
         picked = []
         for score, pid, did in self._ranked_passages(q, view, k=12):
             heading, text = self.pass_text[pid]
-            if need_pct and (self.docs[did].auth < 2 or not RATE_STATEMENT.search(text)):
+            if need_pct and (self.docs[did].auth < 2 or not RATE_STATEMENT.search(text)
+                             or (q.terms and not q.terms & terms(text))
+                             or self._coverage(q, pid, did, product_only=True) < 0.75):
                 continue
             if q.branch and q.branch.lower() not in f"{self.docs[did].title} {text}".lower():
                 continue
-            if text.rstrip().endswith("?") or self._coverage(q, pid, did) < 0.4:
+            if re.sub(r"\s*\(https?://[^)]*\)\s*$", "", text).rstrip().endswith("?"):
                 continue          # an FAQ question line is not an answer
+            if self._coverage(q, pid, did) < 0.4:
+                continue
             if picked and (score < 0.6 * picked[0][0] or any(text == t for _, _, _, t in picked)):
                 continue
             picked.append((score, pid, did, text))
