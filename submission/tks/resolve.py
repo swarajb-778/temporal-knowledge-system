@@ -7,13 +7,13 @@ import math
 import re
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from urllib.parse import urlsplit
 
 from .extract import (AUTHORITY, Row, canon_url, clean_inline, hours_blocks, model_years, page_kind,
                       parse_tables, passages, prose_facts, published_date, terms, tier_range)
-from .query import BAD_DATE, Query, parse
+from .query import BAD_DATE, Query, clean_question, parse
 from .search import BM25, STOP, normalize, tokens
 
 # OWASP AST05 (Untrusted External Instructions): page text is attacker-controllable data. Nothing in it is
@@ -27,6 +27,9 @@ DOMAIN_WORDS = frozenset("""interest rate rates annual percentage yield dividend
 mortgage mortgages savings checking account accounts loan loans auto vehicle jumbo special specials money market
 business personal branch branches hours lobby routing number balance minimum maximum refinance equity
 traditional retirement credit card cards platinum rewards visa motorcycle model fixed variable term""".split())
+NUMBER_WORDS = frozenset("""one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen
+sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million
+first second third fourth fifth sixth seventh eighth ninth tenth""".split())
 PASSAGE_WEIGHT = {"rate_sheet": 1.0, "product": 1.0, "guide": 0.8, "promo": 0.7, "news": 0.65, "file": 0.55,
                   "blog": 0.5, "calculator": 0.3, "legal": 0.3, "listing": 0.0}
 
@@ -96,18 +99,30 @@ FAMILIES = (("card", r"visa|credit card"), ("heloc", r"heloc|line of credit"),
             ("money_market", r"money market"), ("checking", r"checking"), ("savings", r"savings"))
 
 
-def _fact_key(f: Fact) -> tuple:
+def _fact_key(f: Fact, layout_robust: bool = False) -> tuple:
+    """Identity of a fact across pages and crawls: family, variant flags and normalized labels (the
+    model-year bucket rank replaces the years). layout_robust also folds in caption words, so a history
+    survives a redesign that moved "1st Rate Checking" from the caption into a column; conflict reporting
+    keeps the exact labels (measured: the looser key merged distinct rows and cut F1 from 0.55 to 0.50)."""
     low = f.row.text.lower()
     family = next((name for name, pat in FAMILIES if re.search(pat, low)), f.row.caption.lower())
-    labels = " ".join(f.row.labels).lower().replace(",", "")
+    text = " ".join(f.row.labels)
+    if layout_robust:
+        text = f"{f.row.caption} {text}"
+    text = re.sub(r"(\d)\.00\b", r"\1", text.lower().replace(",", ""))     # $5,000.00 == $5,000
     if f.year_rank is not None:     # "2023-26 Model Year" last year == "2024-27 Model Year" this year
-        labels = re.sub(r"model\s+year\s+\d{4}\s*[-–]\s*\d{2,4}|\d{4}\s*[-–]\s*\d{2,4}\s+model\s+year|"
-                        r"\d{4}\s+model\s+year(\s*\(and older\))?", f"model-year-rank-{f.year_rank}", labels)
-    if "business" in f.flags:
-        labels = labels.replace("business", "")
-    labels = re.sub(r"[^a-z0-9+]+", " ", labels).strip()
+        text = re.sub(r"model\s+year\s+\d{4}\s*[-–]\s*\d{2,4}|\d{4}\s*[-–]\s*\d{2,4}\s+model\s+year|"
+                      r"\d{4}\s+model\s+year(\s*\(and older\))?", f" myrank{f.year_rank} ", text)
+    if layout_robust:
+        labels = " ".join(sorted(set(re.findall(r"[a-z0-9+]+", text)) - KEY_GENERIC))
+    else:
+        labels = re.sub(r"[^a-z0-9+]+", " ", text.replace("business", "") if "business" in f.flags else text).strip()
     flags = tuple(sorted(f.flags & {"business", "jumbo", "refinance", "intro", "roth", "traditional"}))
     return family, flags, labels
+
+
+KEY_GENERIC = frozenset("""account accounts rates rate business loans loan home the and of a to for or
+savings accounts certificates""".split()) - {"savings"}
 
 
 def _main_value(values):
@@ -288,27 +303,41 @@ class Knowledge:
             words = set()
             for heading, text in self.pass_text:
                 words.update(re.findall(r"[a-z]{4,}", normalize(f"{heading} {text}").lower()))
+            products = set(DOMAIN_WORDS)
             for f in self.facts:
-                words.update(re.findall(r"[a-z]{4,}", f.row.text.lower()))
-            words.update(DOMAIN_WORDS)
+                products.update(re.findall(r"[a-z]{4,}", f.row.text.lower()))
+            words |= products
             index: dict[tuple[str, int], list[str]] = defaultdict(list)
             for w in sorted(words):                       # sorted: difflib ties resolve the same every run
                 index[(w[0], len(w))].append(w)
-            self._vocab = (frozenset(words), index)
-        vocab, index = self._vocab
+            self._vocab = (frozenset(words), index, frozenset(products))
+        vocab, index, products = self._vocab
         shouty = question.isupper()
 
         def fix(m):
             w = m.group(0)
             low = w.lower()
-            if low in vocab or low in STOP or (w[0].isupper() and not shouty and m.start() > 0):
+            if low in vocab or low in STOP or low in NUMBER_WORDS:
                 return w
-            if len(low) == 4:      # short words: only an unambiguous transposition ("laon" -> "loan")
+            proper = w[0].isupper() and not shouty and m.start() > 0
+            if len(low) >= 8 and not proper:   # run-together words: "sharesavings" -> "share savings"
+                splits = [(min(i, len(low) - i), low[:i], low[i:]) for i in range(4, len(low) - 3)
+                          if low[:i] in vocab and low[i:] in vocab]
+                if splits:
+                    _, a, b = max(splits)
+                    return f"{a} {b}"
+            if len(low) == 4 and not proper:   # short words: only an unambiguous transposition ("laon")
                 swaps = [c for c in index.get((low[0], 4), ()) if sorted(c) == sorted(low)]
                 return swaps[0] if len(swaps) == 1 else w
             cands = [c for n in range(len(low) - 2, len(low) + 3) for c in index.get((low[0], n), ())]
             best = difflib.get_close_matches(low, cands, n=1, cutoff=0.85)
-            return best[0] if best else w
+            if not best and len(low) >= 6:      # looser only toward product words: "markit" -> "market"
+                best = difflib.get_close_matches(low, [c for c in cands if c in products], n=1, cutoff=0.8)
+            # A capitalized word mid-sentence is a name: correct it only to a product word ("Choise" ->
+            # "choice"), never to an arbitrary word, so an unknown city stays unknown and is refused.
+            if best and (not proper or best[0] in products):
+                return best[0]
+            return w
         return re.sub(r"\b[A-Za-z]{4,}\b", fix, normalize(question))
 
     def _stale_values(self, sid: str, q: Query) -> set[float]:
@@ -346,57 +375,87 @@ class Knowledge:
         if not self.snaps:
             return self._refuse("no snapshots ingested")
         try:
-            q = parse(self._spellfix(question), as_of, default_year=int(self.snaps[-1][1][:4]),
-                      today=self.snaps[-1][1])
-            if q.future:
-                return self._refuse("asks for a value after the newest crawl; the site does not forecast")
-            if q.as_of == BAD_DATE:
-                return self._refuse("as_of could not be read as a date")
-            if q.off_topic and q.intent != "rate":
-                return self._refuse("outside what a credit union website covers")
-            sid = self._snapshot_for(q.as_of)
-            view = self.views[sid]
-            # Before the first crawl nothing was observed: only a rate whose stated effective date is on or
-            # before the requested date can be vouched for.
-            not_after = q.as_of if q.as_of and q.as_of < self.snaps[0][1] else None
-            if not_after:
-                return self._rate(q, sid, view, not_after) or self._refuse("date precedes the first crawl")
-            if q.intent == "hours":
-                hours = self._hours(q, sid, view)
-                if q.branch and re.search(r"\baddress|\bwhere\b|\blocated\b", q.text, re.I):
-                    addr = self._address(q, sid, view)     # "hours and address of the Galena branch"
-                    if addr and not hours.confident:
-                        addr.text += " Its lobby hours are not listed on the website."
-                        return addr
-                    if addr:
-                        hours.text = f"{addr.text} {hours.text}"
-                        hours.sources = addr.sources + hours.sources
-                return hours
-            if q.intent == "count":
-                got = self._count(q, sid, view)
-                if got:
-                    return got
-            if q.intent == "address":
-                got = self._address(q, sid, view)
-                if got:
-                    return got
-                if q.branch:       # a named branch with no address on the site: never guess from prose
-                    return self._refuse(f"no address published for {q.branch}")
-            if q.intent in ("rate", "url"):
-                got = self._rate(q, sid, view)
-                if got:
-                    return got
-            if q.intent == "url":
-                return self._url(q, sid, view) or self._refuse()
-            if q.intent == "rate" and q.ptoks and not q.soft:
-                # Rates are only quoted from rate tables or authoritative prose that states a rate.
-                return self._passage(q, sid, view, need_pct=True) or self._refuse()
-            return self._passage(q, sid, view) or self._refuse()
+            text = clean_question(self._spellfix(question))
+            parts = self._split_questions(text)
+            if len(parts) < 2:
+                return self._answer_one(text, as_of)
+            # Several questions in one message: answer each; statements ride along as shared context.
+            answers = [self._answer_one(p, as_of) for p in parts]
+            good = [a for a in answers if a.confident]
+            if not good:
+                return answers[0]
+            return self.c.Answer(text=" ".join(a.text for a in good),
+                                 sources=list({s.url: s for a in good for s in a.sources}.values()), confident=True,
+                                 conflict_note=" ".join(a.conflict_note for a in good if a.conflict_note) or None)
         except MemoryError:
-            raise             # resource exhaustion must not masquerade as an honest "I don't know"
+            raise
         except Exception as e:  # a crash must never surface a guessed value
             print(f"answer() failed: {type(e).__name__}: {e}", file=sys.stderr)
-            return self._refuse(f"internal error ({type(e).__name__})")   # no internals in the answer
+            return self._refuse(f"internal error ({type(e).__name__})")
+
+    def _split_questions(self, text: str) -> list[str]:
+        sents = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        asks = [s for s in sents if s.rstrip().endswith("?")]
+        context = [s for s in sents if not s.rstrip().endswith("?")]
+        if len(asks) < 2 and asks:
+            pieces = re.split(r",?\s+and\s+(?=(?:what|how|does|do|is|are|can|which)\b)", asks[0])
+            if len(pieces) == 2:
+                asks = [pieces[0].rstrip(",") + "?", pieces[1]]
+        if len(asks) < 2:
+            return [text]
+        today = self.snaps[-1][1]
+        # A follow-up with fewer than two topic words of its own ("How many times?", "how much can it hold?",
+        # "..., and at what APR?") leans on the first question: keep the message whole.
+        if any(len(parse(a, None, int(today[:4]), today).ptoks) < 2 for a in asks):
+            return [text]
+        return [" ".join(context + [a]) for a in asks]
+
+    def _answer_one(self, question: str, as_of: str | None = None):
+        q = parse(question, as_of, default_year=int(self.snaps[-1][1][:4]), today=self.snaps[-1][1])
+        if q.future:
+            return self._refuse("asks for a value after the newest crawl; the site does not forecast")
+        if q.as_of == BAD_DATE:
+            return self._refuse("as_of could not be read as a date")
+        if q.off_topic and q.intent != "rate":
+            return self._refuse("outside what a credit union website covers")
+        sid = self._snapshot_for(q.as_of)
+        view = self.views[sid]
+        # Before the first crawl nothing was observed: only a rate whose stated effective date is on or
+        # before the requested date can be vouched for.
+        not_after = q.as_of if q.as_of and q.as_of < self.snaps[0][1] else None
+        if not_after:
+            return self._rate(q, sid, view, not_after) or self._refuse("date precedes the first crawl")
+        if q.intent == "hours":
+            hours = self._hours(q, sid, view)
+            if q.branch and re.search(r"\baddress|\bwhere\b|\blocated\b", q.text, re.I):
+                addr = self._address(q, sid, view)     # "hours and address of the Galena branch"
+                if addr and not hours.confident:
+                    addr.text += " Its lobby hours are not listed on the website."
+                    return addr
+                if addr:
+                    hours.text = f"{addr.text} {hours.text}"
+                    hours.sources = addr.sources + hours.sources
+            return hours
+        if q.intent == "count":
+            got = self._count(q, sid, view)
+            if got:
+                return got
+        if q.intent == "address":
+            got = self._address(q, sid, view)
+            if got:
+                return got
+            if q.branch:       # a named branch with no address on the site: never guess from prose
+                return self._refuse(f"no address published for {q.branch}")
+        if q.intent in ("rate", "url"):
+            got = self._rate(q, sid, view)
+            if got:
+                return got
+        if q.intent == "url":
+            return self._url(q, sid, view) or self._refuse()
+        if q.intent == "rate" and q.ptoks and not q.soft:
+            # Rates are only quoted from rate tables or authoritative prose that states a rate.
+            return self._passage(q, sid, view, need_pct=True) or self._refuse()
+        return self._passage(q, sid, view) or self._refuse()
 
     def _row_ok(self, q: Query, f: Fact) -> bool:
         """Product identity only (segment and variant flags). Term, model year and amount are applied after
@@ -406,9 +465,9 @@ class Knowledge:
             asked.add("ira")
         big = max(q.amounts, default=0.0)
         for flag in ("jumbo", "ira", "refinance", "intro"):
-            if flag == "jumbo" and "jumbo" in f.flags and (
-                    q.superlative == "max" or (f.row.min_earn and big >= f.row.min_earn)):
-                continue      # "pays the most" or a deposit above the jumbo minimum: the jumbo row applies
+            if flag == "jumbo" and "jumbo" in f.flags and (q.both_segments or q.superlative == "max" or (
+                    f.row.min_earn and big >= f.row.min_earn)):
+                continue      # "pays the most", "regular and jumbo" or a deposit above the jumbo minimum
             if (flag in asked) != (flag in f.flags):
                 return False
         for flag in ("roth", "traditional"):
@@ -416,7 +475,7 @@ class Knowledge:
                 return False
         if "business" in asked and "business" not in f.flags:
             return False
-        if "business" in f.flags and "business" not in asked and not q.listing:
+        if "business" in f.flags and "business" not in asked and not (q.listing or q.both_segments):
             return False
         return True
 
@@ -491,8 +550,9 @@ class Knowledge:
         if q.amounts and any(any(f.tier for _, f in g) for g in groups.values()):
             groups = {k: g for k, g in groups.items() if any(f.tier for _, f in g)}   # tiered products answer
         top = max(s for g in groups.values() for s, _ in g)
-        # A listing question ("what cards do you offer") wants every matching product, not just the best one.
-        floor = 0.0 if q.listing else top * 0.999
+        # A listing question ("what cards do you offer") wants every matching product, not just the best one;
+        # "business vs personal Platinum Visa" wants the near-tied product from the other segment too.
+        floor = 0.0 if q.listing else top * (0.6 if q.both_segments else 0.999)
         tied = {k: [f for s, f in g] for k, g in groups.items() if max(s for s, _ in g) >= floor}
         if q.multi and not q.listing:
             # "Bright Savings and High-Yield Savings": greedily add the group that covers the most question
@@ -514,7 +574,7 @@ class Knowledge:
             # A product page can embed an old copy of a table (a 2025 mortgage table on the checking page).
             # For the same product family, term and tier, only the newest stated effective date survives.
             def same(f):
-                return _fact_key(f)[0], frozenset(f.terms), f.tier
+                return _fact_key(f)[:2], frozenset(f.terms), f.tier     # family + segment flags, term, tier
             newest: dict[tuple, str] = {}
             for _, fs in out:
                 for f in fs:
@@ -525,6 +585,12 @@ class Knowledge:
     def _rate(self, q: Query, sid: str, view: dict[str, int], not_after: str | None = None):
         groups, product_found = self._rate_groups(q, view, not_after)
         if not groups:
+            if product_found and q.intent == "rate" and q.terms and (q.yesno or q.listing):
+                # "Can I finance it for 60 months?": the honest answer is no, plus what is offered.
+                offered = self._rate(replace(q, terms=set(), yesno=False, listing=True), sid, view, not_after)
+                if offered and offered.confident:
+                    offered.text = "That term is not offered. What is offered: " + offered.text
+                    return offered
             if product_found and q.intent == "rate" and (q.terms or q.years or q.amounts):
                 return self._refuse("the product exists, but not for that term, model year or amount")
             return None
@@ -820,22 +886,25 @@ class Knowledge:
         d = self.docs[did]
         return (_bucket(d.auth), f.row.effective or "", d.auth, self.fetched.get((sid, did), ""), -did)
 
-    def _observations(self):
+    def _observations(self, layout_robust: bool = False):
         """fact identity -> snapshot index -> [(priority, doc, value, fact)] across every crawl (cached)."""
         if self._obs is None:
+            self._obs = {}
+        if layout_robust not in self._obs:
             obs: dict[tuple, dict[int, list]] = defaultdict(lambda: defaultdict(list))
             for si, (sid, _) in enumerate(self.snaps):
                 for did in sorted(set(self.views[sid].values())):
                     for fi in self.facts_by_doc.get(did, ()):
                         f = self.facts[fi]
                         metric, value = _main_value(f.row.values)
-                        obs[_fact_key(f) + (metric,)][si].append((self._prio(sid, did, f), did, value, f))
-            self._obs = obs
-        return self._obs
+                        obs[_fact_key(f, layout_robust) + (metric,)][si].append(
+                            (self._prio(sid, did, f), did, value, f))
+            self._obs[layout_robust] = obs
+        return self._obs[layout_robust]
 
     def _timeline(self, f: Fact) -> list[tuple[int, str]]:
         """Authoritative value of this fact in each crawl it appears in: [(snapshot index, value)]."""
-        per_snap = self._observations().get(_fact_key(f) + (_main_value(f.row.values)[0],), {})
+        per_snap = self._observations(True).get(_fact_key(f, True) + (_main_value(f.row.values)[0],), {})
         out = []
         for si in sorted(per_snap):
             prio, _, val, _ = max(per_snap[si], key=lambda x: x[0])

@@ -17,8 +17,13 @@ ORDINAL = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "f
 FUTURE = re.compile(r"\b(will|going to|forecast|predict\w*|expect\w*|projected?|in the future|next year|"
                     r"anticipat\w*)\b", re.I)
 CHANGE = re.compile(r"\b(previous(ly)?|prior|used to|go(ne|es)? (up|down)|went (up|down)|increas(e|ed|es)|"
-                    r"decreas(e|ed|es)|rais(e|ed)|lowered|dropp?(ed)?|fell|rose|chang(e|ed|es)|history|"
-                    r"originally|initially|before (it|that|the change))\b", re.I)
+                    r"decreas(e|ed|es)|rais(e|ed)|lowered|drops?|dropped|fall|falls|fell|rise|rises|rose|"
+                    r"chang(e|ed|es)|history|originally|initially|before (it|that|the change))\b", re.I)
+# A sentence that claims authority or issues instructions is not part of the question at all.
+INSTRUCTION_SENTENCE = re.compile(r"\b(authori[sz]e[ds]?|instructions?|admin(istrator)?|override|disregard|"
+                                  r"pretend|jailbreak|developer mode|system prompt|you are now|you must)\b", re.I)
+YESNO = re.compile(r"^\s*(can|could|do|does|is|are|may|will)\s+(i|you|we|they|dupaco|it|my|a|an|the)\b|"
+                   r"\b(can|could) i\b", re.I)
 VERSUS = re.compile(r"\b(vs\.?|versus|compared (to|with)|than)\b.*\b(now|today|currently|current)\b|"
                     r"\b(now|today|currently)\b.*\b(vs\.?|versus|compared (to|with))\b", re.I)
 # Prompt-injection phrasing inside a question. Stripped only so it does not distort parsing; safety does not
@@ -150,7 +155,8 @@ QUALIFIER_WORDS = {norm_token(w) for w in (
     "history", "originally", "better", "worse", "higher", "lower", "both", "compare", "still", "why", "true",
     "really", "correct", "right", "wrong", "actually", "back", "ago", "earlier", "later", "around", "roughly",
     "approximately", "exactly", "precisely", "update", "updated", "updates", "recrawl", "crawl", "posted",
-    "website", "site", "listed", "advertised")}
+    "website", "site", "listed", "advertised", "less", "fewer", "more", "drop", "drops", "fall", "falls",
+    "rise", "rises", "fell", "rose", "finance", "dollar", "dollars", "thousand", "crawl", "crawls", "model")}
 FILLER_CAPS = {"dupaco", "the", "which", "what", "your", "each", "any", "a", "an", "is", "are", "do", "does", "can",
                "when", "where", "how", "our", "my", "give", "tell", "me", "for", "of", "at", "in", "to", "and",
                "nearest", "closest", "local", "main", "new", "newest", "that", "this", "near", "every", "all",
@@ -183,6 +189,8 @@ class Query:
     multi: bool = False             # "X and Y": answer every product named, not only the best match
     answer_type: str | None = None  # money | phone | date: what a correct passage must contain
     wants_minimum: bool = False     # "minimum balance / to open": an amount, not the lowest rate
+    yesno: bool = False             # "Can I finance it for 60 months?": say no and give what is offered
+    both_segments: bool = False     # "regular and jumbo", "personal and business": no variant filtering
 
 
 def _date_from_text(text: str, default_year: int, today: date | None = None):
@@ -191,11 +199,19 @@ def _date_from_text(text: str, default_year: int, today: date | None = None):
     return (period[1].isoformat(), span) if period else (None, None)
 
 
-def parse(question: str, as_of: str | None = None, default_year: int = 2026, today: str | None = None) -> Query:
-    text = " ".join(normalize(question).split())
+def clean_question(question: str) -> str:
+    """Strip markup and instruction-bearing sentences, keep the member's actual question."""
+    text = re.sub(r"</?[A-Za-z][\w-]*[^>]{0,80}>", " ", " ".join(normalize(question).split()))
+    sents = re.split(r"(?<=[.!?])\s+", text)
+    kept = [s for s in sents if not INSTRUCTION_SENTENCE.search(s)]
+    text = " ".join(kept) if kept else text
     for pat in INJECTION:
         text = re.sub(pat, " ", text, flags=re.I)
-    text = " ".join(text.split())
+    return " ".join(text.split())
+
+
+def parse(question: str, as_of: str | None = None, default_year: int = 2026, today: str | None = None) -> Query:
+    text = clean_question(question)
     body = text
     ref = date.fromisoformat(today) if today else None
     found, span = _date_from_text(text, default_year, ref)
@@ -226,6 +242,12 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
         unit = (m.group(2) or "").lower()
         q.amounts.append(v * (1000 if unit in ("k", "thousand") else 1e6 if unit == "million" else 1))
     q.amounts += [float(n) * 1000 for n in re.findall(r"(?<![$\d.,])(?<!\$ )\b(\d{2,3})k\b", low)]  # bare "50k"
+    for n, unit in re.findall(r"(?<![$\d.,])\b(\d+(?:\.\d+)?)\s*(thousand|million)\b", low):     # "150 thousand"
+        q.amounts.append(float(n) * (1000 if unit == "thousand" else 1e6))
+    if not q.amounts:          # a bare "30000" or "25,000 dollars" next to a balance or loan is an amount too
+        q.amounts += [float(n.replace(",", "")) for n in re.findall(
+            r"(?<![$\d.,/-])\b(\d{1,3}(?:,\d{3})+|\d{4,7})\b(?!\s*(?:%|percent|months?|years?|mos?|yrs?))", low)
+            if not re.fullmatch(r"(19|20)\d\d", n)]
 
     if re.search(r"\bapys?\b|annual percentage yield|\byield", low):
         q.metric = "apy"
@@ -240,6 +262,13 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
             q.flags.add(flag)
     if "business" in q.flags and re.search(r"\bpersonal\b", low):
         q.flags.discard("business")     # "personal and business cards": list both segments
+        q.both_segments = True
+    if "jumbo" in q.flags and re.search(r"\b(regular|standard|non-jumbo)\b", low) and re.search(r"\band\b|\bvs\b", low):
+        q.flags.discard("jumbo")        # "the regular and jumbo specials": both variants
+        q.both_segments = True
+    if {"roth", "traditional"} <= q.flags:
+        q.flags -= {"roth", "traditional"}     # "Roth and Traditional": either IRA type
+    q.yesno = bool(YESNO.search(text))
     negated = set()
     for m in NEGATED.finditer(low):     # "I'm not asking about IRAs" must not turn the IRA filter on
         word = m.group(4)

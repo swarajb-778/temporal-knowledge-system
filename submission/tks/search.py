@@ -28,7 +28,8 @@ your yours dupaco dupacos credit union union's currently current today still off
 going there hi hello thanks thank so put keep stretch shopping looking apply applies wanted getting i'm i've
 i'd planning plan thinking publish published listed quote quoted carry carries financed finance borrow
 borrowing financing moment these days nowadays lately whats hows wheres whens whos buying buy u ur pls
-plz asking ask asked wondering curious question also anyway btw""".split())
+plz asking ask asked wondering curious question also anyway btw i'll we'll you'll it's that's there's
+what's here's let's""".split())
 STOP -= {"credit", "off", "up"}
 
 # Members and the site use different words for the same product.
