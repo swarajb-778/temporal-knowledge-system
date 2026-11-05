@@ -22,9 +22,12 @@ QUALIFIER_WORDS = {norm_token(w) for w in (
     "tier", "tiers", "between", "link", "url", "website", "page", "web", "site", "find", "look", "option",
     "options", "product", "products", "type", "types", "kind", "available", "all", "list", "every", "offer",
     "much", "many", "term", "month", "year", "new", "used", "range", "personal", "qualify", "intro",
-    "introductory", "ignoring", "excluding", "besides")}
-FILLER_CAPS = {"dupaco", "the", "which", "what", "your", "each", "any", "a", "is", "are", "do", "does", "can",
-               "when", "where", "how", "our", "my", "give", "tell", "me", "for", "of", "at", "in", "to", "and"}
+    "introductory", "ignoring", "excluding", "besides", "open", "opening")}
+FILLER_CAPS = {"dupaco", "the", "which", "what", "your", "each", "any", "a", "an", "is", "are", "do", "does", "can",
+               "when", "where", "how", "our", "my", "give", "tell", "me", "for", "of", "at", "in", "to", "and",
+               "nearest", "closest", "local", "main", "new", "newest", "that", "this", "near", "every", "all",
+               "hours", "lobby", "drive-up", "address", "open", "still", "full-service", "same", "other", "one",
+               "credit", "union", "home", "office", "online", "about", "i", "visit", "go", "from", "with", "or"}
 
 
 @dataclass
@@ -41,6 +44,7 @@ class Query:
     superlative: str | None = None
     intent: str = "general"         # rate | hours | url | count | general
     listing: bool = False
+    soft: bool = False              # routed to rate tables by wording only: fall back to passages, never refuse
     hours_kind: str = "lobby"
     branch: str | None = None
     count_word: str | None = None
@@ -106,27 +110,37 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
         q.intent = "url"
     elif re.search(r"\baddress\b|\bwhere is\b|\blocated\b", low) and q.terms == set():
         q.intent = "address"
-    elif re.search(r"\bhours\b|\bwhat time\b|\bopen (on|until|at)\b", low):
+    elif re.search(r"\bhours\b|\bwhat time\b|\bopen (on|until) (mon|tue|wed|thu|fri|sat|sun)", low):
         q.intent = "hours"
         q.hours_kind = "drive" if re.search(r"drive|drive-up", low) else "lobby"
     elif re.search(r"\bhow many\b", low):
         q.intent = "count"
         after = tokens(low.split("how many", 1)[1])
         q.count_word = after[0] if after else None
-    elif RATE_INTENT.search(low):
+    elif RATE_INTENT.search(low) or (re.search(r"\b(pay|pays|earn|earns)\b", low)
+                                     and not re.search(r"\b(fee|fees|cost|charge|bill|loan payment)\b", low)):
         q.intent = "rate"
-    q.listing = bool(re.search(r"\b(cards|certificates|cds|accounts|loans|products|options|all|list|every|"
-                               r"types? of|kinds? of)\b", low))
+    elif re.search(r"\bspecials?\b|\btiers?\b|\bterms\b", low):
+        q.intent, q.soft = "rate", True     # "what are the certificate specials / terms" -> rate table first
+    q.listing = bool(re.search(r"\b(cards|certificates|cds|accounts|loans|products|options|specials|terms|all|"
+                               r"list|every|types? of|kinds? of)\b", low))
+    if q.metric == "apr" and re.search(r"\brate\b", low) and "annual percentage rate" not in low:
+        q.metric = None             # "rate and APR": show both columns
 
-    for pat in (r"((?:[A-Z][\w'’.&-]*\s+){1,3})(?:branch|office|location)\b",
-                r"\b(?:branch|office|location)\s+(?:in|at|on)\s+((?:[A-Z][\w'’.&-]*\s*){1,3})"):
-        m = re.search(pat, text)
+    # Case-insensitive on purpose: members type "galena branch" and "GALENA BRANCH" too.
+    for pat in (r"((?:[\w'’.&-]+\s+){1,3})(?:branch|office|location)\b(?!es)",
+                r"\b(?:branch|office|location)\s+(?:in|at|on)\s+((?:[\w'’.&-]+\s*){1,2})"):
+        m = re.search(pat, text, re.I)
         if m:
-            words = [re.sub(r"['’]s$", "", w).strip(".,?") for w in m.group(1).split()]
-            words = [w for w in words if w and w.lower() not in FILLER_CAPS]
-            if words:
+            words = [re.sub(r"['’]s$", "", w.lower()).strip(".,?") for w in m.group(1).split()]
+            while words and words[0] in FILLER_CAPS:
+                words.pop(0)
+            if words and not any(w in FILLER_CAPS for w in words):
                 q.branch = " ".join(words)
                 break
+    if q.intent == "general" and q.listing and q.branch is None and re.search(
+            r"\b(savings|checking|certificates?|cds?|money market|ira|loans?|cards?)\b", low):
+        q.intent, q.soft = "rate", True     # "what savings accounts can I open" -> products on the rate sheet
 
     q.ptoks = [t for t in q.toks if t not in RATE_WORDS and t not in QUALIFIER_WORDS
                and not re.fullmatch(r"\d+k?", t)]

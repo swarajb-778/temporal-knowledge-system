@@ -14,7 +14,8 @@ same see she should show so some tell than that the their them then there these 
 too under until up us use very want was we were what when where which while who why will with would you
 your yours dupaco dupacos credit union union's currently current today still offer offered many between
 going there hi hello thanks thank so put keep stretch shopping looking apply applies wanted getting i'm i've
-i'd planning plan thinking""".split())
+i'd planning plan thinking publish published listed quote quoted carry carries financed finance borrow
+borrowing""".split())
 STOP -= {"credit", "off", "up"}
 
 # Members and the site use different words for the same product.

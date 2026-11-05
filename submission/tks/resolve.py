@@ -99,6 +99,21 @@ def _topic(f: Fact, metric: str) -> str:
     return " ".join([caption, " ".join(f.row.labels), METRIC_NAME.get(metric, metric)] + extra).strip()
 
 
+STREET = {"avenue": "ave", "street": "st", "road": "rd", "drive": "dr", "lane": "ln", "boulevard": "blvd",
+          "highway": "hwy", "court": "ct", "place": "pl", "parkway": "pkwy", "north": "n", "south": "s",
+          "east": "e", "west": "w"}
+
+
+def _place_words(text: str) -> list[str]:
+    return [STREET.get(w, w) for w in re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", text.lower())]
+
+
+def _mentions(name: str, text: str) -> bool:
+    """'Pennsylvania Avenue' matches '3999 Pennsylvania Ave., Dubuque'."""
+    want, have = _place_words(name), set(_place_words(text))
+    return bool(want) and all(w in have for w in want)
+
+
 def _sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"“(])", text) if s.strip()]
 
@@ -244,7 +259,7 @@ class Knowledge:
                     return got
             if q.intent == "url":
                 return self._url(q, sid, view) or self._refuse()
-            if q.intent == "rate" and q.ptoks:
+            if q.intent == "rate" and q.ptoks and not q.soft:
                 # Rates are only quoted from rate tables or authoritative prose that states a rate.
                 return self._passage(q, sid, view, need_pct=True) or self._refuse()
             return self._passage(q, sid, view) or self._refuse()
@@ -358,6 +373,14 @@ class Knowledge:
 
     def _compose_rates(self, q: Query, rows) -> str:
         parts, last_caption = [], None
+        if q.listing and len(rows) > 16:
+            # Too many tiers to read back: one line per product (its first tier) so every product is named.
+            firsts, seen = [], set()
+            for fs, f in rows:
+                if id(fs) not in seen:
+                    seen.add(id(fs))
+                    firsts.append((fs, f))
+            rows = firsts
         for _, f in rows[:16]:
             r = f.row
             vals = [(m, v) for m, v in r.values if q.metric in (None, m)] or r.values
@@ -373,7 +396,7 @@ class Knowledge:
         dids = [d for d in view.values() if d in self.hours]
         if q.branch:
             name = q.branch.lower()
-            dids = [d for d in dids if name in self.docs[d].text.lower()]
+            dids = [d for d in dids if _mentions(name, self.docs[d].text)]
             if not dids:
                 return self._refuse(f"no published hours for {q.branch}")
         idx = 1 if q.hours_kind == "drive" else 0
@@ -429,10 +452,12 @@ class Knowledge:
                              or (q.terms and not q.terms & terms(text))
                              or self._coverage(q, pid, did, product_only=True) < 0.75):
                 continue
-            if q.branch and q.branch.lower() not in f"{self.docs[did].title} {text}".lower():
+            if q.branch and not _mentions(q.branch, f"{self.docs[did].title} {text}"):
                 continue
             if re.sub(r"\s*\(https?://[^)]*\)\s*$", "", text).rstrip().endswith("?"):
                 continue          # an FAQ question line is not an answer
+            if len(re.sub(r"\([^)]*https?://[^)]*\)", " ", text).split()) < 8:
+                continue          # navigation fragments ("Continue Cancel Keep reading") carry no answer
             if self._coverage(q, pid, did) < 0.4:
                 continue
             if picked and (score < 0.6 * picked[0][0] or any(text == t for _, _, _, t in picked)):
@@ -466,7 +491,7 @@ class Knowledge:
         hits = []
         for did in sorted(set(view.values()), key=lambda d: (-self.docs[d].auth, d)):
             for line in ADDRESS.findall(self.docs[did].text):
-                if name in line.lower():
+                if _mentions(name, line):
                     hits.append((did, clean_inline(line)))
         if not hits:
             return None
