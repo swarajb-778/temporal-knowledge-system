@@ -3,9 +3,21 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import defaultdict
 
 WORD = re.compile(r"[a-z0-9]+(?:[$'’][a-z0-9]+)*")
+_PUNCT = {**dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2043"), "-"),
+          **dict.fromkeys(map(ord, "\u2018\u2019\u201a\u201b\u2032"), "'"),
+          **dict.fromkeys(map(ord, "\u201c\u201d\u201e\u201f\u2033"), '"'),
+          **dict.fromkeys(map(ord, "\u00a0\u2007\u202f\u200b\u2060\ufeff"), " ")}
+
+
+def normalize(text: str) -> str:
+    """One normal form for page text and questions alike (both sides must match): NFKC, ASCII dashes,
+    quotes and spaces, and no emoji or control characters."""
+    t = unicodedata.normalize("NFKC", text or "").translate(_PUNCT)
+    return "".join(ch if ch in "\n\t" or (ch.isprintable() and ord(ch) < 0x2000) else " " for ch in t)
 
 STOP = set("""a about after all also am an and any are as at be been before being but by can could did do
 does doing for from get give had has have having he her here how i if in into is it its just know let like
@@ -25,7 +37,9 @@ SYN = {"cd": "certificate", "cds": "certificate", "certificates": "certificate",
        "branches": "branch", "locations": "location", "atms": "atm", "hrs": "hours", "hour": "hours",
        "saving": "savings", "checkings": "checking", "rewards": "reward", "loans": "loan",
        "cards": "card", "employees": "employee", "members": "member", "yr": "year", "years": "year",
-       "months": "month", "mo": "month", "drive-up": "drive", "drivethru": "drive", "lobbies": "lobby"}
+       "months": "month", "mo": "month", "drive-up": "drive", "drivethru": "drive", "lobbies": "lobby",
+       "mnth": "month", "mth": "month", "mos": "month", "yrs": "year", "cert": "certificate",
+       "certs": "certificate", "acct": "account", "accts": "account", "chkg": "checking", "mtg": "mortgage"}
 
 
 SUFFIXES = ("ations", "ation", "itions", "ition", "ions", "ion", "ings", "ing", "ized", "izes", "ize", "ed")
@@ -56,7 +70,7 @@ RATE_WORDS = {norm_token(w) for w in ("rate", "rates", "apr", "apy", "interest",
 
 def tokens(text: str, keep_stop: bool = False) -> list[str]:
     out = []
-    for w in WORD.findall(text.lower().replace("drive-up", "drive").replace("drive up", "drive")):
+    for w in WORD.findall(normalize(text).lower().replace("drive-up", "drive").replace("drive up", "drive")):
         if not keep_stop and w in STOP:
             continue
         t = norm_token(w)

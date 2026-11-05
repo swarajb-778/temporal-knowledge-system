@@ -1,18 +1,20 @@
 """The knowledge system: keeps every page version, decides what is current, answers and lists conflicts."""
 from __future__ import annotations
 
+import difflib
 import hashlib
 import math
 import re
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import date
 from urllib.parse import urlsplit
 
 from .extract import (AUTHORITY, Row, canon_url, clean_inline, hours_blocks, model_years, page_kind,
                       parse_tables, passages, prose_facts, published_date, terms, tier_range)
 from .query import Query, parse
-from .search import BM25, tokens
+from .search import BM25, STOP, normalize, tokens
 
 # OWASP AST05 (Untrusted External Instructions): page text is attacker-controllable data. Nothing in it is
 # ever executed or treated as an instruction; answers are extracted verbatim from ranked, authority-weighted
@@ -59,6 +61,11 @@ class Fact:
 
 def _bucket(auth: int) -> int:
     return min(auth, 4)        # the rate sheet and a product page are equally authoritative
+
+
+def _pct_values(text: str) -> set[float]:
+    """Every 'N%' in text as a rounded number, so '7.5%', '7.50 %' and '7.50%' compare equal."""
+    return {round(float(n), 3) for n in re.findall(r"(\d+(?:\.\d+)?)\s?%", text)}
 
 
 def _first_num(v: str) -> float:
@@ -143,6 +150,9 @@ class Knowledge:
         self._fact_idf: dict[str, float] | None = None
         self._max_idf = 0.0
         self._conflicts: list | None = None
+        self._obs: dict | None = None
+        self._vocab: tuple | None = None
+        self._stale_pct: dict[str, list] = {}
         self.site: str | None = None
 
     # ------------------------------------------------------------------ ingest
@@ -182,7 +192,8 @@ class Knowledge:
         self.views[sid] = view
         self.snaps = sorted(set(self.snaps) | {(sid, taken)}, key=lambda s: (s[1], s[0]))
         self._fact_idf = None
-        self._conflicts = None          # a new crawl can add or settle contradictions
+        self._conflicts = self._obs = self._vocab = None     # a new crawl can add or settle contradictions
+        self._stale_pct = {}
 
     def _add_doc(self, url, canon, title, md) -> int:
         kind = page_kind(url)
@@ -250,6 +261,54 @@ class Knowledge:
         url = urlsplit(self.docs[did].url)._replace(query="", fragment="").geturl()   # no crawler params
         return self.c.Source(url=url, snapshot_id=sid, quote=quote[:240] or None)
 
+    def _spellfix(self, question: str) -> str:
+        """Correct misspelled words ('certifcate', 'morgage') to the site's own vocabulary.
+
+        Only lowercase-looking words of 5+ letters that the site never uses are touched, the candidate must
+        share the first letter and length within 2, and capitalized words mid-sentence (branch and city names
+        like 'Ames') are left alone so an unknown place still gets an honest refusal."""
+        if self._vocab is None:
+            words = set()
+            for heading, text in self.pass_text:
+                words.update(re.findall(r"[a-z]{4,}", normalize(f"{heading} {text}").lower()))
+            for f in self.facts:
+                words.update(re.findall(r"[a-z]{4,}", f.row.text.lower()))
+            index: dict[tuple[str, int], list[str]] = defaultdict(list)
+            for w in sorted(words):                       # sorted: difflib ties resolve the same every run
+                index[(w[0], len(w))].append(w)
+            self._vocab = (frozenset(words), index)
+        vocab, index = self._vocab
+        shouty = question.isupper()
+
+        def fix(m):
+            w = m.group(0)
+            low = w.lower()
+            if low in vocab or low in STOP or (w[0].isupper() and not shouty and m.start() > 0):
+                return w
+            cands = [c for n in range(len(low) - 2, len(low) + 3) for c in index.get((low[0], n), ())]
+            best = difflib.get_close_matches(low, cands, n=1, cutoff=0.85)
+            return best[0] if best else w
+        return re.sub(r"\b[A-Za-z]{5,}\b", fix, normalize(question))
+
+    def _stale_values(self, sid: str, q: Query) -> set[float]:
+        """Values that, for the product asked about, only ever appear superseded or stale: never current on
+        an authoritative page in this snapshot. A passage sentence quoting one is dropped (output whitelist).
+        Scoped by product so a 1.00% fee is not mistaken for some other product's old 1.00% rate."""
+        if sid not in self._stale_pct:
+            current = set()
+            for did in set(self.views[sid].values()):
+                if _bucket(self.docs[did].auth) >= 4:
+                    for fi in self.facts_by_doc.get(did, ()):
+                        current.update(_pct_values(" ".join(v for _, v in self.facts[fi].row.values)))
+            entries = []
+            for c in self.conflicts():
+                old = set().union(*(_pct_values(v) for v in c.values if v != c.resolution)) - current
+                if old:
+                    entries.append((frozenset(old), frozenset(tokens(c.topic))))
+            self._stale_pct[sid] = entries
+        asked = set(q.ptoks)
+        return set().union(*(vals for vals, topic in self._stale_pct[sid] if topic & asked), set())
+
     def _refuse(self, note: str | None = None):
         return self.c.Answer(text=REFUSAL, sources=[], confident=False, conflict_note=note)
 
@@ -266,9 +325,17 @@ class Knowledge:
         if not self.snaps:
             return self._refuse("no snapshots ingested")
         try:
-            q = parse(question, as_of, default_year=int(self.snaps[-1][1][:4]))
+            q = parse(self._spellfix(question), as_of, default_year=int(self.snaps[-1][1][:4]),
+                      today=self.snaps[-1][1])
+            if q.future:
+                return self._refuse("asks for a value after the newest crawl; the site does not forecast")
             sid = self._snapshot_for(q.as_of)
             view = self.views[sid]
+            # Before the first crawl nothing was observed: only a rate whose stated effective date is on or
+            # before the requested date can be vouched for.
+            not_after = q.as_of if q.as_of and q.as_of < self.snaps[0][1] else None
+            if not_after:
+                return self._rate(q, sid, view, not_after) or self._refuse("date precedes the first crawl")
             if q.intent == "hours":
                 return self._hours(q, sid, view)
             if q.intent == "count":
@@ -302,6 +369,8 @@ class Knowledge:
         if asked & {"roth", "traditional"}:
             asked.add("ira")
         for flag in ("jumbo", "ira", "refinance", "intro"):
+            if flag == "jumbo" and q.superlative == "max" and "jumbo" in f.flags:
+                continue      # "which special pays the most" must consider the jumbo tier too
             if (flag in asked) != (flag in f.flags):
                 return False
         for flag in ("roth", "traditional"):
@@ -317,7 +386,7 @@ class Knowledge:
             return False
         return True
 
-    def _rate_groups(self, q: Query, view: dict[str, int]):
+    def _rate_groups(self, q: Query, view: dict[str, int], not_after: str | None = None):
         idf = self._idf()
         want = sorted(set(q.ptoks))
         if not want:
@@ -334,6 +403,8 @@ class Knowledge:
                 f = self.facts[fi]
                 if not self._row_ok(q, f):
                     continue
+                if not_after and not (f.row.effective and f.row.effective <= not_after):
+                    continue
                 s = sum(idf[t] for t in want if t in f.toks)
                 if s > 0 and s / denom >= 0.5:
                     groups[(did, f.row.table)].append((s, f))
@@ -343,6 +414,18 @@ class Knowledge:
         # A listing question ("what cards do you offer") wants every matching product, not just the best one.
         floor = 0.0 if q.listing else top * 0.999
         tied = {k: [f for s, f in g] for k, g in groups.items() if max(s for s, _ in g) >= floor}
+        if q.multi and not q.listing:
+            # "Bright Savings and High-Yield Savings": greedily add the group that covers the most question
+            # words the chosen groups leave uncovered, so every product named gets an answer.
+            covered = set().union(*(f.toks for fs in tied.values() for f in fs))
+            for _ in range(3):
+                gain = {k: sum(idf.get(t, 0) for t in want if t not in covered and any(t in f.toks for _, f in g))
+                        for k, g in groups.items() if k not in tied}
+                best = max(sorted(gain), key=lambda k: gain[k], default=None)
+                if best is None or gain[best] <= 0:
+                    break
+                tied[best] = [f for _, f in groups[best]]
+                covered |= set().union(*(f.toks for f in tied[best]))
         best_bucket = max(_bucket(self.docs[k[0]].auth) for k in tied)
         out = [(k, fs) for k, fs in sorted(tied.items()) if _bucket(self.docs[k[0]].auth) == best_bucket]
         if q.amounts:
@@ -352,8 +435,8 @@ class Knowledge:
             out = [(k, [f for f in fs if width(f) == min(width(g) for g in fs)]) for k, fs in out]
         return out
 
-    def _rate(self, q: Query, sid: str, view: dict[str, int]):
-        groups = self._rate_groups(q, view)
+    def _rate(self, q: Query, sid: str, view: dict[str, int], not_after: str | None = None):
+        groups = self._rate_groups(q, view, not_after)
         if not groups:
             return None
         order = {did: i for i, did in enumerate(view.values())}
@@ -383,8 +466,13 @@ class Knowledge:
                 vals = [v for m, v in item[1].row.values if q.metric in (None, m)] or [v for _, v in item[1].row.values]
                 return _first_num(vals[-1])
             pick = (max if q.superlative == "max" else min)(rows, key=val)
+            plain = [r for r in rows if "jumbo" not in r[1].flags]
             rows = [pick]
+            if "jumbo" in pick[1].flags and "jumbo" not in q.flags and plain:
+                rows.append(max(plain, key=val))     # the jumbo tops the list; also name the best regular one
         text = self._compose_rates(q, rows)
+        if q.history:
+            text = f"{text} {self._history_text(q, sid, rows)}".strip()
         if q.intent == "url":
             urls = sorted({s.url for s in sources}, key=lambda u: (self.docs[view[canon_url(u)]].kind == "rate_sheet", u))
             text = "You can find them at " + " and ".join(f"{u}#rates" for u in urls) + "."
@@ -487,7 +575,18 @@ class Knowledge:
                 break
         if not picked:
             return None
-        body = " ".join(self._best_sentences(q, t, limit=360 if len(picked) > 1 else 420) for *_, t in picked)
+        stale = self._stale_values(sid, q)
+        pieces = []
+        for *_, t in picked:
+            piece = self._best_sentences(q, t, limit=360 if len(picked) > 1 else 420)
+            # OWASP AST05 / output whitelist: a sentence quoting a value that is only ever superseded or stale
+            # is dropped, whatever page it came from.
+            keep = [s for s in _sentences(piece) if not (_pct_values(s) & stale)]
+            if keep:
+                pieces.append(" ".join(keep))
+        if not pieces:
+            return None
+        body = " ".join(pieces)
         srcs = []
         for _, _, did, t in picked:
             if all(s.url != self.docs[did].url for s in srcs):
@@ -586,14 +685,61 @@ class Knowledge:
         d = self.docs[did]
         return (_bucket(d.auth), f.row.effective or "", self.fetched.get((sid, did), ""), d.auth, -did)
 
+    def _observations(self):
+        """fact identity -> snapshot index -> [(priority, doc, value, fact)] across every crawl (cached)."""
+        if self._obs is None:
+            obs: dict[tuple, dict[int, list]] = defaultdict(lambda: defaultdict(list))
+            for si, (sid, _) in enumerate(self.snaps):
+                for did in sorted(set(self.views[sid].values())):
+                    for fi in self.facts_by_doc.get(did, ()):
+                        f = self.facts[fi]
+                        metric, value = _main_value(f.row.values)
+                        obs[_fact_key(f) + (metric,)][si].append((self._prio(sid, did, f), did, value, f))
+            self._obs = obs
+        return self._obs
+
+    def _timeline(self, f: Fact) -> list[tuple[int, str]]:
+        """Authoritative value of this fact in each crawl it appears in: [(snapshot index, value)]."""
+        per_snap = self._observations().get(_fact_key(f) + (_main_value(f.row.values)[0],), {})
+        out = []
+        for si in sorted(per_snap):
+            prio, _, val, _ = max(per_snap[si], key=lambda x: x[0])
+            if prio[0] >= 4:
+                out.append((si, val))
+        return out
+
+    def _history_text(self, q: Query, sid: str, rows) -> str:
+        """Old values are shown only for an explicit change question, and only for the facts answered."""
+        now_si = next(i for i, (s, _) in enumerate(self.snaps) if s == sid)
+        month = lambda si: date.fromisoformat(self.snaps[si][1]).strftime("%B %Y")    # noqa: E731
+        parts = []
+        for _, f in rows[:3]:
+            tl = [(si, v) for si, v in self._timeline(f) if si <= now_si]
+            if not tl:
+                continue
+            current = tl[-1][1]
+            label = ", ".join(f.row.labels)
+            if q.compare_to:
+                base = self._snapshot_for(q.compare_to)
+                base_si = next(i for i, (s, _) in enumerate(self.snaps) if s == base)
+                then = [v for si, v in tl if si <= base_si]
+                if not then:
+                    continue
+                trend = ("up from" if _first_num(current) > _first_num(then[-1]) else
+                         "down from" if _first_num(current) < _first_num(then[-1]) else "unchanged from")
+                parts.append(f"{label}: {current} now, {trend} {then[-1]} in {month(base_si)}.")
+            else:
+                earlier = [(si, v) for si, v in tl if v != current]
+                if earlier:
+                    si, v = earlier[-1]
+                    trend = "up" if _first_num(current) > _first_num(v) else "down"
+                    parts.append(f"{label}: previously {v} (through the {month(si)} crawl); now {current}, {trend}.")
+                else:
+                    parts.append(f"{label}: unchanged at {current} since the {month(tl[0][0])} crawl.")
+        return " ".join(parts)
+
     def _table_conflicts(self):
-        obs: dict[tuple, dict[int, list]] = defaultdict(lambda: defaultdict(list))
-        for si, (sid, _) in enumerate(self.snaps):
-            for did in sorted(set(self.views[sid].values())):
-                for fi in self.facts_by_doc.get(did, ()):
-                    f = self.facts[fi]
-                    metric, value = _main_value(f.row.values)
-                    obs[_fact_key(f) + (metric,)][si].append((self._prio(sid, did, f), did, value, f))
+        obs = self._observations()
         out, seen = [], set()
         latest = len(self.snaps) - 1
         for key in sorted(obs, key=lambda k: (bool(k[1]), k)):

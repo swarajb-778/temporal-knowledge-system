@@ -15,7 +15,7 @@ MONTHS = ("january", "february", "march", "april", "may", "june", "july", "augus
 
 PCT = re.compile(r"(\d+(?:\.\d+)?)\s?%")
 MONEY = r"\$\s?(\d[\d,]*(?:\.\d+)?)"
-TERM = re.compile(r"\b(\d{1,3})\s*-?\s*(month|mo|year|yr)s?\b", re.I)
+TERM = re.compile(r"\b(\d{1,3})\s*-?\s*(months?|mos?|mnths?|mths?|years?|yrs?)\b", re.I)
 MODEL_YEARS = re.compile(r"\b(\d{4})\s*[-–]\s*(\d{2,4})\s+model\s+year|\b(\d{4})\s+model\s+year(\s*\(and older\))?", re.I)
 EFFECTIVE = re.compile(r"effective as of (\d{1,2})/(\d{1,2})/(\d{4})", re.I)
 LONG_DATE = re.compile(r"\b(" + "|".join(MONTHS) + r")\s+(\d{1,2}),\s+(\d{4})\b", re.I)
