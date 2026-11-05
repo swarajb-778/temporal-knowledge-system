@@ -527,7 +527,7 @@ class Knowledge:
             self.bm25._finalize()
         # A word no rate table uses weighs as much as it is rare on the site: "construction" (a real product
         # with no published rate) sinks coverage and forces a refusal, a common verb like "put" barely counts.
-        cidf, cmax = self.bm25.idf, max(self.bm25.idf.values(), default=self._max_idf)
+        cidf = self.bm25.idf
         # Rate-table words weigh their idf; other words on the site weigh their rarity there ("reverse",
         # "construction" must be matched, so an unpublished product is refused). A word found nowhere on the site
         # (an unfixable typo, "pls") is noise and weighs nothing - unless it is a capitalized name ("Fargo").
