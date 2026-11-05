@@ -92,7 +92,7 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026) -> 
         v = float(m.group(1).replace(",", ""))
         unit = (m.group(2) or "").lower()
         q.amounts.append(v * (1000 if unit in ("k", "thousand") else 1e6 if unit == "million" else 1))
-    q.amounts += [float(n) * 1000 for n in re.findall(r"\b(\d{2,3})k\b", low)]
+    q.amounts += [float(n) * 1000 for n in re.findall(r"(?<![$\d.,])(?<!\$ )\b(\d{2,3})k\b", low)]  # bare "50k"
 
     if re.search(r"\bapys?\b|annual percentage yield|\byield", low):
         q.metric = "apy"

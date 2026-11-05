@@ -22,6 +22,7 @@ class TestParse(unittest.TestCase):
         self.assertEqual(q.terms, {360, 6})
         self.assertEqual(q.years, [2025])
         self.assertIn(100000.0, q.amounts)
+        self.assertEqual(parse("What rate for a $50k CD?").amounts, [50000.0])
 
     def test_intents(self):
         self.assertEqual(parse("What are the drive-thru hours?").hours_kind, "drive")

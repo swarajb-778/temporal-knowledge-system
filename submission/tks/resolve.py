@@ -141,6 +141,8 @@ class Knowledge:
         self.pass_docs: list[list[int]] = []
         self._pass_ids: dict[tuple[str, str, str], int] = {}
         self._fact_idf: dict[str, float] | None = None
+        self._max_idf = 0.0
+        self._conflicts: list | None = None
         self.site: str | None = None
 
     # ------------------------------------------------------------------ ingest
@@ -180,6 +182,7 @@ class Knowledge:
         self.views[sid] = view
         self.snaps = sorted(set(self.snaps) | {(sid, taken)}, key=lambda s: (s[1], s[0]))
         self._fact_idf = None
+        self._conflicts = None          # a new crawl can add or settle contradictions
 
     def _add_doc(self, url, canon, title, md) -> int:
         kind = page_kind(url)
@@ -575,7 +578,7 @@ class Knowledge:
 
     # ------------------------------------------------------------------ conflicts
     def conflicts(self):
-        if getattr(self, "_conflicts", None) is None:
+        if self._conflicts is None:
             self._conflicts = self._table_conflicts() + self._count_conflicts()
         return list(self._conflicts)
 
@@ -650,7 +653,7 @@ class Knowledge:
         latest = self.snaps[-1][0]
         view = self.views[latest]
         for noun, question in (("branch", "How many branches does Dupaco have?"),):
-            ans = self._count(parse(question), latest, view)
+            ans = self._count(parse(question, default_year=int(self.snaps[-1][1][:4])), latest, view)
             if not ans or not ans.conflict_note:
                 continue
             values = re.findall(r"([\d,]+) \(latest", ans.conflict_note)

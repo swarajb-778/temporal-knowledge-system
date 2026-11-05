@@ -81,6 +81,14 @@ class TestConflicts(unittest.TestCase):
             self.assertTrue(c.reason and c.sources)
             self.assertFalse(any("0.01%" in v for v in c.values))
 
+    def test_conflicts_refresh_after_a_new_crawl(self):
+        ks = solution.build()
+        first, second = fixtures.snapshots()
+        ks.ingest(first)
+        self.assertEqual(ks.conflicts(), [])
+        ks.ingest(second)
+        self.assertTrue(ks.conflicts())
+
 
 class TestIngestValidation(unittest.TestCase):
     def test_foreign_hosts_are_dropped(self):

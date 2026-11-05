@@ -240,7 +240,7 @@ def prose_facts(md: str) -> list[Row]:
             continue
         s = clean_inline(raw.strip().lstrip("-* ").strip())
         s = re.sub(r"\s*\(https?://[^)]*\)", "", s)
-        s = re.sub(r"(?<=APR|APY)\s*\d\b", "", s).strip()
+        s = re.sub(r"(?<=APR|APY)\s*\d\b(?![.%\d])", "", s).strip()     # footnote "APR 2", not "APY 5%"
         m = PROSE_RATE.match(s)
         if not m:
             continue
@@ -249,7 +249,8 @@ def prose_facts(md: str) -> list[Row]:
         metric = ("apy" if "apy" in low else "apr" if "apr" in low else "dividend" if "dividend" in low
                   else "rate")
         text = f"{heading} {label}"
-        rows.append(Row(heading, [label], [], [(metric, m.group("val").replace(" ", ""))], None, s, 1000 + i, text))
+        # Negative table ids never collide with parse_tables' 0, 1, 2, ... so each prose line is its own group.
+        rows.append(Row(heading, [label], [], [(metric, m.group("val").replace(" ", ""))], None, s, -(i + 1), text))
     return rows
 
 
