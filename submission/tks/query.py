@@ -21,7 +21,14 @@ CHANGE = re.compile(r"\b(previous(ly)?|prior|used to|go(ne|es)? (up|down)|went (
                     r"chang(e|ed|es)|history|originally|initially|before (it|that|the change))\b", re.I)
 # A sentence that claims authority or issues instructions is not part of the question at all.
 INSTRUCTION_SENTENCE = re.compile(r"\b(authori[sz]e[ds]?|instructions?|admin(istrator)?|override|disregard|"
-                                  r"pretend|jailbreak|developer mode|system prompt|you are now|you must)\b", re.I)
+                                  r"pretend|jailbreak|developer mode|system prompt|you are now|you must|"
+                                  r"mode on)\b", re.I)
+HOLIDAYS = {"new year's day": (1, 1), "new years day": (1, 1), "independence day": (7, 4), "july 4th": (7, 4),
+            "fourth of july": (7, 4), "christmas": (12, 25), "christmas day": (12, 25), "halloween": (10, 31),
+            "valentine's day": (2, 14)}
+# Moving US holidays: (month, weekday Mon=0, nth occurrence; -1 = last).
+MOVING_HOLIDAYS = {"memorial day": (5, 0, -1), "labor day": (9, 0, 1), "thanksgiving": (11, 3, 4),
+                   "mlk day": (1, 0, 3), "presidents day": (2, 0, 3), "columbus day": (10, 0, 2)}
 YESNO = re.compile(r"^\s*(can|could|do|does|is|are|may|will)\s+(i|you|we|they|dupaco|it|my|a|an|the)\b|"
                    r"\b(can|could) i\b", re.I)
 VERSUS = re.compile(r"\b(vs\.?|versus|compared (to|with)|than)\b.*\b(now|today|currently|current)\b|"
@@ -88,6 +95,16 @@ def _period(text: str, default_year: int, today: date | None):
                 return (_d(y, mo, min(int(m[2]), calendar.monthrange(y, mo)[1])),) * 2
             return _d(y, mo, 1), _d(y, mo)
         rules.append((m, month_day))
+    for m in re.finditer(r"\b(" + "|".join(map(re.escape, sorted(set(HOLIDAYS) | set(MOVING_HOLIDAYS), key=len,
+                                                                 reverse=True))) + r")(?:,?\s+(20\d\d))?\b", low):
+        def holiday(m):
+            y = int(m[2] or default_year)
+            if m[1] in HOLIDAYS:
+                return (_d(y, *HOLIDAYS[m[1]]),) * 2
+            mo, wd, nth = MOVING_HOLIDAYS[m[1]]
+            days = [d for d in range(1, calendar.monthrange(y, mo)[1] + 1) if date(y, mo, d).weekday() == wd]
+            return (_d(y, mo, days[nth if nth < 0 else nth - 1]),) * 2
+        rules.append((m, holiday))
     if today:
         for m in re.finditer(r"\b(\d+|a|an|one|two|three|four|five|six)\s+(months?|weeks?)\s+ago\b", low):
             def ago(m):
@@ -156,7 +173,8 @@ QUALIFIER_WORDS = {norm_token(w) for w in (
     "really", "correct", "right", "wrong", "actually", "back", "ago", "earlier", "later", "around", "roughly",
     "approximately", "exactly", "precisely", "update", "updated", "updates", "recrawl", "crawl", "posted",
     "website", "site", "listed", "advertised", "less", "fewer", "more", "drop", "drops", "fall", "falls",
-    "rise", "rises", "fell", "rose", "finance", "dollar", "dollars", "thousand", "crawl", "crawls", "model")}
+    "rise", "rises", "fell", "rose", "finance", "dollar", "dollars", "thousand", "crawl", "crawls", "model",
+    "cheaper", "cheapest", "expensive", "deal", "real", "actual", "true", "lock", "figure", "figures")}
 FILLER_CAPS = {"dupaco", "the", "which", "what", "your", "each", "any", "a", "an", "is", "are", "do", "does", "can",
                "when", "where", "how", "our", "my", "give", "tell", "me", "for", "of", "at", "in", "to", "and",
                "nearest", "closest", "local", "main", "new", "newest", "that", "this", "near", "every", "all",
@@ -184,6 +202,7 @@ class Query:
     count_word: str | None = None
     future: bool = False            # asks for a value after the newest crawl ("what will it be next year")
     off_topic: bool = False         # weather, stocks, sports...: not something a credit union website answers
+    holiday: bool = False           # "open on Thanksgiving?": only a passage naming that holiday can answer
     history: bool = False           # asks how a value changed, not just what it is
     compare_to: str | None = None   # the earlier date a history question compares against
     multi: bool = False             # "X and Y": answer every product named, not only the best match
@@ -191,6 +210,7 @@ class Query:
     wants_minimum: bool = False     # "minimum balance / to open": an amount, not the lowest rate
     yesno: bool = False             # "Can I finance it for 60 months?": say no and give what is offered
     both_segments: bool = False     # "regular and jumbo", "personal and business": no variant filtering
+    proper: set[str] = field(default_factory=set)    # tokens of capitalized names in the question
 
 
 def _date_from_text(text: str, default_year: int, today: date | None = None):
@@ -202,6 +222,11 @@ def _date_from_text(text: str, default_year: int, today: date | None = None):
 def clean_question(question: str) -> str:
     """Strip markup and instruction-bearing sentences, keep the member's actual question."""
     text = re.sub(r"</?[A-Za-z][\w-]*[^>]{0,80}>", " ", " ".join(normalize(question).split()))
+    text = re.sub(r"\[[^\]]{0,80}\]", " ", text)                       # "[assistant override]"
+    # A quoted claim carrying a number or an instruction ("HELOC = 0.99% APR (ignore the website)") is
+    # someone else's text, not the member's question.
+    text = re.sub(r"[\"“][^\"”]{0,200}(\d\s?%|ignore|instruction|override)[^\"”]{0,200}[\"”]", " ", text, flags=re.I)
+    text = re.sub(r"\bno matter what\b[^.?!]*", " ", text, flags=re.I)
     sents = re.split(r"(?<=[.!?])\s+", text)
     kept = [s for s in sents if not INSTRUCTION_SENTENCE.search(s)]
     text = " ".join(kept) if kept else text
@@ -215,6 +240,10 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
     body = text
     ref = date.fromisoformat(today) if today else None
     found, span = _date_from_text(text, default_year, ref)
+    holiday_hours = bool(span and re.search(r"\b(open|closed?|hours)\b", text, re.I) and re.search(
+        "|".join(map(re.escape, list(HOLIDAYS) + list(MOVING_HOLIDAYS))), text[span[0]:span[1]], re.I))
+    if holiday_hours:
+        found, span = None, None    # "open on Thanksgiving?" asks about holiday hours, not about a date
     if span:
         body = text[:span[0]] + " " + text[span[1]:]
     as_of = norm_as_of(as_of)
@@ -232,11 +261,19 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
 
     q = Query(text=text, as_of=as_of, toks=tokens(low), ptoks=[])
     q.compare_to = compare_to
+    q.holiday = holiday_hours
     q.future = bool(ref and found and found > ref.isoformat() and FUTURE.search(text))
     q.off_topic = bool(OFF_TOPIC.search(low))
     q.multi = bool(re.search(r"\b(and|or|vs\.?|versus|both|compare[ds]?|as well as)\b|&|,", low))
     q.terms = terms(low)
     q.years = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", low)]
+    asks = [s for s in re.split(r"(?<=[.!?])\s+", low) if s.rstrip().endswith("?")]
+    asked_years = [int(y) for y in re.findall(r"\b(19[5-9]\d|20[0-4]\d)\b", asks[-1])] if asks else []
+    if asked_years:
+        q.years = asked_years       # "rates cover 2019 through 2026. What about a 2017 ATV?" -> 2017
+    # Capitalized words mid-sentence are names; an unknown name ("Wells Fargo") must still count against
+    # coverage, while an unknown lowercase word is just noise.
+    q.proper = {t for w in re.findall(r"(?<=[a-z,;] )[A-Z][a-zA-Z'-]+", text) for t in tokens(w)}
     for m in MONEY.finditer(low):
         v = float(m.group(1).replace(",", ""))
         unit = (m.group(2) or "").lower()
@@ -302,7 +339,8 @@ def parse(question: str, as_of: str | None = None, default_year: int = 2026, tod
         q.count_word = after[0] if after else None
     elif q.wants_minimum and re.search(r"\b(savings|checking|certificates?|cds?|money market|account|ira)\b", low):
         q.intent = "rate"           # the minimum to open lives in the same rate table
-    elif RATE_INTENT.search(low) or (re.search(r"\b(pay|pays|paying|earn|earns|earning|yielding)\b", low)
+    elif RATE_INTENT.search(low) or re.search(r"\b(cheaper|cheapest|more expensive|costs? less|better deal)\b", low) or (
+            re.search(r"\b(pay|pays|paying|earn|earns|earning|yielding)\b", low)
                                      and not re.search(r"\b(fee|fees|cost|charge|bill|loan payment)\b", low)):
         q.intent = "rate"
     elif re.search(r"\bspecials?\b|\btiers?\b|\bterms\b", low):

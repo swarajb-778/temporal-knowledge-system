@@ -13,7 +13,9 @@ from urllib.parse import urlsplit
 
 from .extract import (AUTHORITY, Row, canon_url, clean_inline, hours_blocks, model_years, page_kind,
                       parse_tables, passages, prose_facts, published_date, terms, tier_range)
-from .query import BAD_DATE, Query, clean_question, parse
+from .query import BAD_DATE, HOLIDAYS, MOVING_HOLIDAYS, Query, clean_question, parse
+
+HOLIDAY_NAMES = tuple(HOLIDAYS) + tuple(MOVING_HOLIDAYS)
 from .search import BM25, STOP, normalize, tokens
 
 # OWASP AST05 (Untrusted External Instructions): page text is attacker-controllable data. Nothing in it is
@@ -418,6 +420,13 @@ class Knowledge:
             return self._refuse("as_of could not be read as a date")
         if q.off_topic and q.intent != "rate":
             return self._refuse("outside what a credit union website covers")
+        if q.holiday:
+            holiday = re.search("|".join(map(re.escape, sorted(HOLIDAY_NAMES, key=len, reverse=True))), q.text,
+                                re.I).group(0).lower()
+            got = self._passage(q, self._snapshot_for(None), self.views[self._snapshot_for(None)])
+            if got and all(w in got.text.lower() for w in holiday.split()):
+                return got
+            return self._refuse(f"no {holiday} hours published")
         sid = self._snapshot_for(q.as_of)
         view = self.views[sid]
         # Before the first crawl nothing was observed: only a rate whose stated effective date is on or
@@ -482,7 +491,10 @@ class Knowledge:
     @staticmethod
     def _qualify(q: Query, fs: list[Fact]) -> list[Fact]:
         """Keep the rows of one product that fit the asked term, model year and amount(s)."""
-        rows = [f for f in fs if not q.terms or q.terms & f.terms]
+        # In "HELOC APR and the 10-year home equity loan APR" the term belongs to the loan: a product with no
+        # terms at all is not filtered by it.
+        termless = q.multi and not any(f.terms for f in fs)
+        rows = [f for f in fs if not q.terms or termless or q.terms & f.terms]
         if q.years and any(f.years for f in rows):
             rows = [f for f in rows if f.years and any(f.years[0] <= y <= f.years[1] for y in q.years)]
         if not q.amounts:
@@ -517,11 +529,17 @@ class Knowledge:
         # A word no rate table uses weighs as much as it is rare on the site: "construction" (a real product
         # with no published rate) sinks coverage and forces a refusal, a common verb like "put" barely counts.
         cidf, cmax = self.bm25.idf, max(self.bm25.idf.values(), default=self._max_idf)
-        weight = {t: idf[t] if t in idf else min(self._max_idf, cidf.get(t, cmax)) for t in want}
+        # Rate-table words weigh their idf; other words on the site weigh their rarity there ("reverse",
+        # "construction" must be matched, so an unpublished product is refused). A word found nowhere on the site
+        # (an unfixable typo, "pls") is noise and weighs nothing - unless it is a capitalized name ("Fargo").
+        weight = {t: idf[t] if t in idf else min(self._max_idf, cidf[t]) if t in cidf else
+                  (self._max_idf if t in q.proper else 0.0) for t in want}
         denom = sum(weight.values())
+        if denom <= 0:
+            return [], False
         # Variant words alone ("jumbo", "refinance", "business") never identify a product: a jumbo
         # *mortgage* question must not land on jumbo *certificates*.
-        nouns = [t for t in want if t not in VARIANT_WORDS]
+        nouns = [t for t in want if t not in VARIANT_WORDS and weight[t] > 0]
         noun_denom = sum(weight[t] for t in nouns)
         cands: dict[tuple[int, int], list[tuple[float, Fact]]] = defaultdict(list)
         for did in sorted(set(view.values())):
@@ -708,7 +726,8 @@ class Knowledge:
         mx = max(idf.values()) if idf else 1.0
         heading, text = self.pass_text[pid]
         have = set(tokens(f"{self.docs[did].title} {heading} {text}"))
-        want = set(q.ptoks if product_only else q.toks)
+        # A word found nowhere on the site (an unfixable typo, "pls") is noise unless it is a capitalized name.
+        want = {t for t in (q.ptoks if product_only else q.toks) if t in idf or t in q.proper}
         if not want:
             return 0.0
         return sum(idf.get(t, mx) for t in want & have) / sum(idf.get(t, mx) for t in want)
